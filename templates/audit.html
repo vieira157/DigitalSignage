@@ -1,0 +1,8 @@
+{% extends "base_admin.html" %}
+{% block title %}Auditoria - Digital Signage{% endblock %}
+{% block page_title %}Auditoria{% endblock %}
+{% block page_subtitle %}Registro de logins, usuários, releases, comandos remotos e credenciais{% endblock %}
+{% block extra_style %}.filters{display:grid;grid-template-columns:1fr 1fr 160px auto;gap:8px;padding:14px;border-bottom:1px solid #edf0f4}@media(max-width:800px){.filters{grid-template-columns:1fr}}{% endblock %}
+{% block content %}
+<section class="panel"><div class="panel-head"><div><h2>Eventos administrativos</h2><p>Últimos registros conforme filtros.</p></div></div><form class="filters" method="get"><input name="action" value="{{ filters.action }}" placeholder="Ação"><input name="username" value="{{ filters.username }}" placeholder="Usuário"><select name="days">{% for d in [1,7,30,90,365] %}<option value="{{ d }}" {% if filters.days==d %}selected{% endif %}>Últimos {{ d }} dia(s)</option>{% endfor %}</select><button class="btn secondary" type="submit">Filtrar</button></form><div class="table-wrap"><table class="table"><thead><tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Alvo</th><th>Detalhe</th><th>IP</th></tr></thead><tbody>{% for e in events %}<tr><td>{{ e.created_at_text }}</td><td>{{ e.username or 'system' }}</td><td><span class="badge purple">{{ e.action }}</span></td><td>{{ e.target_type or '—' }} {{ e.target_id or '' }}</td><td>{{ e.detail or '—' }}</td><td>{{ e.ip_address or '—' }}</td></tr>{% else %}<tr><td colspan="6" class="empty">Nenhum evento encontrado.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

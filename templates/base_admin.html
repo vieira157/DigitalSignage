@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Digital Signage{% endblock %}</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#f5f7fb;--panel:#fff;--text:#172033;--muted:#738095;--line:#e5eaf1;--blue:#2563eb;--blue-dark:#1d4ed8;--blue-soft:#eff6ff;--green:#15803d;--green-soft:#ecfdf3;--red:#b42318;--red-soft:#fff1f0;--amber:#b54708;--amber-soft:#fffaeb;--purple:#6941c6;--purple-soft:#f4f3ff;--sidebar:#0f172a;--shadow:0 1px 2px rgba(16,24,40,.04)}
+html,body{margin:0;min-height:100%;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text)}body{overflow-x:hidden}
+.app-shell{min-height:100vh;display:grid;grid-template-columns:248px minmax(0,1fr)}
+.sidebar{grid-column:1;grid-row:1;position:sticky;top:0;height:100vh;background:var(--sidebar);color:#fff;padding:24px 16px;display:flex;flex-direction:column;z-index:50}.brand{font-size:21px;font-weight:760;padding:0 10px 22px;border-bottom:1px solid rgba(255,255,255,.09);letter-spacing:-.25px}.brand small{display:block;margin-top:5px;color:#94a3b8;font-size:11px;font-weight:500}.nav{display:flex;flex-direction:column;gap:6px;margin-top:20px}.nav a{display:flex;align-items:center;gap:9px;width:100%;color:#cbd5e1;text-decoration:none;padding:11px 12px;border-radius:9px;font-size:14px;font-weight:650;white-space:nowrap}.nav a:hover{background:#172033;color:#fff}.nav a.active{background:var(--blue);color:#fff}.nav-icon{width:17px;text-align:center;opacity:.9}.sidebar-foot{margin-top:auto;padding:14px 10px 2px;color:#64748b;font-size:11px;line-height:1.5}
+.workspace{grid-column:2;grid-row:1;min-width:0}.topbar{min-height:72px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 32px;position:sticky;top:0;z-index:30}.topbar h1{margin:0;font-size:20px;letter-spacing:-.25px}.topbar .sub{font-size:12px;color:var(--muted);margin-top:3px}.top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.user-chip{font-size:11px;color:#475467;background:#f8fafc;border:1px solid var(--line);border-radius:999px;padding:7px 10px;font-weight:700}.main{padding:26px 32px 46px;max-width:1650px;margin:0 auto}
+.btn{border:1px solid transparent;border-radius:8px;padding:9px 13px;font:inherit;font-size:12px;font-weight:750;line-height:1;min-height:35px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}.btn:disabled{opacity:.5;cursor:not-allowed}.btn.primary{background:var(--blue);color:#fff}.btn.primary:hover{background:var(--blue-dark)}.btn.secondary{background:#fff;color:#344054;border-color:#d8dee8}.btn.secondary:hover{background:#f8fafc}.btn.success{background:#059669;color:#fff}.btn.danger{background:#dc2626;color:#fff}.btn.danger-outline{background:#fff;color:var(--red);border-color:#fecaca}.btn.ghost{background:transparent;color:#566174}.btn.ghost:hover{background:#f1f5f9}
+.panel{background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden}.panel+.panel{margin-top:16px}.panel-head{padding:17px 19px;border-bottom:1px solid #edf0f4;display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.panel-head h2,.panel-head h3{margin:0}.panel-head h2{font-size:18px}.panel-head h3{font-size:15px}.panel-head p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:12px}.metric{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 17px;box-shadow:var(--shadow)}.metric-label{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.35px}.metric-value{font-size:29px;font-weight:780;margin-top:4px;letter-spacing:-.7px}.metric-note{font-size:11px;color:#98a2b3;margin-top:4px}
+.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.35px;color:#667085}.field-help{font-size:11px;color:#8a94a6;line-height:1.45}input,select,textarea{font:inherit;color:var(--text);background:#fff;border:1px solid #d6dce5;border-radius:8px;padding:10px 11px}input:focus,select:focus,textarea:focus{outline:2px solid #bfdbfe;border-color:var(--blue)}
+.badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:11px;font-weight:700}.badge.green{background:var(--green-soft);color:var(--green)}.badge.red{background:var(--red-soft);color:var(--red)}.badge.amber{background:var(--amber-soft);color:var(--amber)}.badge.blue{background:var(--blue-soft);color:var(--blue)}.badge.purple{background:var(--purple-soft);color:var(--purple)}
+.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:11px 13px;border-bottom:1px solid #edf0f4;font-size:12px;vertical-align:top}.table th{font-size:10px;text-transform:uppercase;letter-spacing:.45px;color:#667085;background:#fbfcfe}.table tr:last-child td{border-bottom:0}
+.notice{border:1px solid #bfdbfe;background:var(--blue-soft);color:#1e3a8a;border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.55}.notice.warning{background:var(--amber-soft);border-color:#fedf89;color:#92400e}.notice.danger{background:var(--red-soft);border-color:#fecaca;color:#991b1b}.empty{padding:38px 22px;text-align:center;color:var(--muted)}.muted{color:var(--muted)}
+.toast-stack{position:fixed;right:22px;bottom:22px;z-index:500;display:grid;gap:8px;width:min(390px,calc(100vw - 32px))}.toast{padding:12px 14px;border-radius:10px;color:#fff;font-size:12px;font-weight:700;box-shadow:0 12px 32px rgba(15,23,42,.2);animation:toast-in .18s ease}.toast.success{background:#047857}.toast.error{background:#b42318}.toast.warning{background:#b54708}.toast.info{background:#1d4ed8}@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.loading-dot{width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:1100px){.app-shell{grid-template-columns:210px minmax(0,1fr)}.sidebar{padding:20px 12px}.main{padding:22px 20px 38px}.metrics{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.app-shell{grid-template-columns:168px minmax(0,1fr)}.sidebar{padding:18px 9px}.brand{font-size:16px;padding-left:7px;padding-right:7px}.nav a{font-size:11px;padding:9px 8px}.nav-icon{display:none}.topbar{padding:12px 14px}.topbar h1{font-size:17px}.main{padding:17px 11px 30px}.metrics{grid-template-columns:1fr 1fr}.top-actions .hide-small{display:none}}
+{% block extra_style %}{% endblock %}
+</style>
+</head>
+<body class="role-{{ request.state.user.role if request.state.user else 'anonymous' }}">
+<div class="app-shell">
+<aside class="sidebar">
+  <div class="brand">Digital Signage<small>Console corporativo</small></div>
+  <nav class="nav">
+    {% set p = request.url.path %}
+    <a href="/admin" class="{{ 'active' if p == '/admin' else '' }}"><span class="nav-icon">⌂</span>Dashboard</a>
+    <a href="/players" class="{{ 'active' if p.startswith('/players') else '' }}"><span class="nav-icon">▣</span>TVs / Players</a>
+    <a href="/players/stability" class="{{ 'active' if p == '/players/stability' or p.endswith('/stability') else '' }}"><span class="nav-icon">◷</span>Estabilidade</a>
+    <a href="/gallery" class="{{ 'active' if p.startswith('/gallery') else '' }}"><span class="nav-icon">▧</span>Galeria</a>
+    <a href="/playlists" class="{{ 'active' if p.startswith('/playlists') or p.startswith('/playlist/') else '' }}"><span class="nav-icon">☷</span>Playlists</a>
+    <a href="/schedules" class="{{ 'active' if p.startswith('/schedules') else '' }}"><span class="nav-icon">◫</span>Agendamentos</a>
+    {% if request.state.user and request.state.user.role == "admin" %}
+    <a href="/releases" class="{{ 'active' if p.startswith('/releases') else '' }}"><span class="nav-icon">⇧</span>Releases</a>
+    <a href="/users" class="{{ 'active' if p.startswith('/users') else '' }}"><span class="nav-icon">◉</span>Usuários</a>
+    <a href="/audit" class="{{ 'active' if p.startswith('/audit') else '' }}"><span class="nav-icon">◎</span>Auditoria</a>
+    {% endif %}
+  </nav>
+  <div class="sidebar-foot">{% if request.state.user %}{{ request.state.user.full_name or request.state.user.username }}<br>{{ request.state.user.role_label }} · <a style="color:#93c5fd" href="/logout">sair</a><br><br>{% endif %}Servidor {{ app_version or '' }}<br>Interface v6</div>
+</aside>
+<section class="workspace">
+  <header class="topbar">
+    <div><h1>{% block page_title %}Digital Signage{% endblock %}</h1><div class="sub">{% block page_subtitle %}{% endblock %}</div></div>
+    <div class="top-actions">{% if request.state.user %}<span class="user-chip">{{ request.state.user.username }} · {{ request.state.user.role_label }}</span>{% endif %}{% block top_actions %}{% endblock %}</div>
+  </header>
+  <main class="main">{% block content %}{% endblock %}</main>
+</section>
+</div>
+<div class="toast-stack" id="toastStack"></div>
+<script>
+(function(){
+  window.dsToast=function(message,kind='success',timeout=3300){if(!message)return;const host=document.getElementById('toastStack');const el=document.createElement('div');el.className=`toast ${kind}`;el.textContent=message;host.appendChild(el);setTimeout(()=>el.remove(),timeout)};
+  const params=new URLSearchParams(location.search);if(params.get('message')){dsToast(params.get('message'),params.get('kind')||'success',4200);params.delete('message');params.delete('kind');const q=params.toString();history.replaceState({},'',location.pathname+(q?`?${q}`:'')+location.hash)}
+  const stored=sessionStorage.getItem('dsToast');if(stored){try{const data=JSON.parse(stored);dsToast(data.message,data.kind||'success')}catch(_){}sessionStorage.removeItem('dsToast')}
+  document.addEventListener('submit',event=>{const form=event.target;if(!(form instanceof HTMLFormElement)||form.dataset.ajax==='1')return;setTimeout(()=>{if(event.defaultPrevented)return;const button=form.querySelector('button[type="submit"],button:not([type])');if(button&&!button.disabled){button.dataset.originalText=button.innerHTML;button.disabled=true;button.innerHTML='<span class="loading-dot"></span> Processando...'}},0)});
+})();
+</script>
+{% block extra_script %}{% endblock %}
+</body>
+</html>

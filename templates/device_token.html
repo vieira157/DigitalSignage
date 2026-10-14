@@ -1,0 +1,7 @@
+{% extends "base_admin.html" %}
+{% block title %}Credencial do player - Digital Signage{% endblock %}
+{% block page_title %}Credencial gerada{% endblock %}
+{% block page_subtitle %}{{ tv_id }} · copie agora; o token não será exibido novamente{% endblock %}
+{% block content %}<section class="panel"><div class="panel-head"><div><h2>Token do device</h2><p>Configure no Raspberry como variável de ambiente <strong>DS_DEVICE_TOKEN</strong>.</p></div><a class="btn secondary" href="/players/{{ tv_id }}">Voltar</a></div><div style="padding:18px"><div class="notice warning">Copie esse valor agora. Depois desta página, o sistema guarda apenas o hash.</div><pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:16px;border-radius:10px;overflow:auto">{{ token }}</pre><p class="muted">Exemplo:</p><pre style="white-space:pre-wrap;background:#f8fafc;border:1px solid #edf0f4;padding:14px;border-radius:10px">export DS_SERVER_BASE="{{ server_base_example }}"
+export DS_TV_ID="{{ tv_id }}"
+export DS_DEVICE_TOKEN="{{ token }}"</pre></div></section>{% endblock %}

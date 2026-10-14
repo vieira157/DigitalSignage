@@ -1,0 +1,22 @@
+[Unit]
+Description=Digital Signage Server (FastAPI/Uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signage
+Group=signage
+WorkingDirectory=/opt/digital-signage
+EnvironmentFile=/etc/digital-signage/server.env
+ExecStart=/opt/digital-signage/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/digital-signage /opt/digital-signage
+
+[Install]
+WantedBy=multi-user.target

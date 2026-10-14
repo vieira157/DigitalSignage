@@ -1,0 +1,95 @@
+# Credenciais e configurações sensíveis
+.env
+.env.*
+!.env.example
+first_admin_credentials.txt
+player.env
+secrets/
+credentials/
+*.key
+*.pem
+*.pfx
+*.crt
+
+# Banco de dados
+*.db
+*.sqlite
+*.sqlite3
+database/
+instance/
+
+# Ambientes Python
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs e estados de execução
+logs/
+*.log
+state.json
+stability_events.json
+sessions/
+runtime/
+cache/
+*.part
+
+# Dados operacionais
+media/uploads/
+media/rendered/
+uploads/
+
+# Backups e históricos locais
+backup/
+backups/
+updates/
+_update_*/
+*.BKP*
+*.bak
+*.old
+*.zip
+
+# Pacotes gerados
+releases/
+packages/
+dist/
+build/
+
+# IDE e sistema operacional
+.vscode/
+.idea/
+*.code-workspace
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Resultados de testes
+coverage/
+htmlcov/
+test-results/
+playwright-report/
+# Templates históricos e cópias antigas
+templates/*_backup*.html
+templates/*backup*.html
+templates/*BKP*
+templates/*.bkp-*
+templates/editor(1).html
+templates/gallery(1).html
+templates/live.html
+
+# Instaladores e scripts históricos
+bootstrap/*_backup.sh
+patch_*.py
+_update_*/
+
+# Documentação específica de atualizações antigas
+LEIA-ME_ATUALIZACAO_*.md
+
+# Cópias e pacotes completos do sistema
+DigitalSignageServer*.zip
+SISTEMA ATUAL*.zip

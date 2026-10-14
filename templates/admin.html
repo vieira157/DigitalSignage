@@ -1,0 +1,21 @@
+{% extends "base_admin.html" %}
+{% block title %}Dashboard - Digital Signage{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Visão geral da operação do Digital Signage{% endblock %}
+{% block top_actions %}<a class="btn primary" href="/gallery">＋ Enviar conteúdo</a>{% endblock %}
+{% block extra_style %}
+.dashboard-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:16px;margin-top:16px}.quick-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:16px}.quick{display:block;text-decoration:none;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:14px}.quick:hover{border-color:#bfdbfe;background:#f8fbff}.quick strong{display:block;font-size:13px}.quick span{display:block;color:var(--muted);font-size:11px;margin-top:4px;line-height:1.4}.event-list{padding:4px 18px 14px}.event{display:grid;grid-template-columns:92px 1fr;gap:12px;padding:11px 0;border-bottom:1px solid #edf0f4}.event:last-child{border-bottom:0}.event-time{font-size:11px;color:var(--muted)}.event-title{font-size:12px;font-weight:750}.event-detail{font-size:11px;color:var(--muted);margin-top:3px}.problem-list{padding:8px 18px 16px}.problem{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #edf0f4}.problem:last-child{border:0}.problem strong{font-size:12px}.problem span{font-size:11px;color:var(--muted);display:block;margin-top:3px}@media(max-width:950px){.dashboard-grid{grid-template-columns:1fr}}
+{% endblock %}
+{% block content %}
+<section class="metrics">
+  <div class="metric"><div class="metric-label">TVs</div><div class="metric-value">{{ stats.tvs_total }}</div><div class="metric-note">{{ stats.tvs_online }} online</div></div>
+  <div class="metric"><div class="metric-label">Com atenção</div><div class="metric-value">{{ stats.tvs_problem }}</div><div class="metric-note">erro, offline ou warning</div></div>
+  <div class="metric"><div class="metric-label">Conteúdos</div><div class="metric-value">{{ stats.contents_total }}</div><div class="metric-note">imagens e vídeos</div></div>
+  <div class="metric"><div class="metric-label">Playlists</div><div class="metric-value">{{ stats.playlists_total }}</div><div class="metric-note">{{ stats.schedules_total }} agendamentos</div></div>
+</section>
+<div class="dashboard-grid">
+  <section class="panel"><div class="panel-head"><div><h2>Operação</h2><p>Acesso rápido às tarefas mais comuns.</p></div></div><div class="quick-grid"><a class="quick" href="/players"><strong>TVs / Players</strong><span>Saúde, telemetria, histórico e manutenção.</span></a><a class="quick" href="/gallery"><strong>Galeria</strong><span>Upload, validação, uso e gerenciamento de mídia.</span></a><a class="quick" href="/playlists"><strong>Playlists</strong><span>Rascunho, publicação, versões e rollback.</span></a><a class="quick" href="/schedules"><strong>Agendamentos</strong><span>Calendário semanal e conflitos de programação.</span></a></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>Players que exigem atenção</h2><p>Problemas operacionais atuais.</p></div><a class="btn secondary" href="/players">Abrir central</a></div><div class="problem-list">{% for tv in problem_tvs %}<div class="problem"><div><strong>{{ tv.name or tv.tv_id }}</strong><span>{{ tv.tv_id }} · {{ tv.reason or tv.health }}</span></div><span class="badge {{ 'red' if tv.health in ['error','offline'] else 'amber' }}">{{ tv.health }}</span></div>{% else %}<div class="empty">Nenhum player exige atenção agora.</div>{% endfor %}</div></section>
+</div>
+<section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2>Eventos recentes</h2><p>Últimas mudanças técnicas registradas.</p></div></div><div class="event-list">{% for event in recent_events %}<div class="event"><div class="event-time">{{ event.created_at_text }}</div><div><div class="event-title">{{ event.tv_id }} · {{ event.title }}</div><div class="event-detail">{{ event.detail or 'Sem detalhe adicional' }}</div></div></div>{% else %}<div class="empty">Nenhum evento registrado ainda.</div>{% endfor %}</div></section>
+{% endblock %}

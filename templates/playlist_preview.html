@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Verificar playlist - {{ playlist.name }}</title>
+    <style>
+        *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden;font-family:Arial,sans-serif}
+        #stage{position:fixed;inset:0;background:#000;display:flex;align-items:center;justify-content:center}
+        #stage img,#stage video{width:100%;height:100%;object-fit:contain;background:#000}
+        #hud{position:fixed;left:18px;bottom:18px;z-index:20;background:rgba(17,24,39,.82);color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;max-width:75vw}
+        #close{position:fixed;right:18px;top:18px;z-index:20;border:0;border-radius:8px;padding:10px 14px;background:rgba(17,24,39,.82);color:#fff;cursor:pointer}
+        #empty{color:#fff;font-size:22px;text-align:center;padding:30px}
+    </style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud">Playlist: {{ playlist.name }}</div>
+<button id="close" type="button">Fechar</button>
+<script>
+const items = {{ playlist_json | safe }};
+const stage = document.getElementById('stage');
+const hud = document.getElementById('hud');
+let index = 0;
+let timer = null;
+
+function clearCurrent(){
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const video = stage.querySelector('video');
+    if (video) video.pause();
+    stage.innerHTML = '';
+}
+function next(){
+    if (!items.length) return;
+    index = (index + 1) % items.length;
+    play();
+}
+function play(){
+    clearCurrent();
+    if (!items.length) {
+        stage.innerHTML = '<div id="empty">A playlist está vazia.</div>';
+        hud.textContent = 'Playlist: {{ playlist.name }} · vazia';
+        return;
+    }
+    const item = items[index];
+    const content = item.content || {};
+    hud.textContent = `{{ playlist.name }} · ${index + 1}/${items.length} · ${content.name || ''}`;
+
+    if (content.content_type === 'video') {
+        const video = document.createElement('video');
+        video.src = content.url;
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.controls = false;
+        video.onended = next;
+        video.onerror = () => { timer = setTimeout(next, 2000); };
+        stage.appendChild(video);
+        const p = video.play();
+        if (p?.catch) p.catch(() => {});
+        return;
+    }
+
+    const img = document.createElement('img');
+    img.src = content.url;
+    img.alt = content.name || '';
+    img.onerror = () => { timer = setTimeout(next, 2000); };
+    stage.appendChild(img);
+    timer = setTimeout(next, (Number(item.duration_sec) || 10) * 1000);
+}
+
+document.getElementById('close').addEventListener('click', () => window.close());
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') window.close();
+    if (event.key === 'ArrowRight') next();
+});
+play();
+</script>
+</body>
+</html>

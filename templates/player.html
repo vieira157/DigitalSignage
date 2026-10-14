@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Signage</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+
+        #stage {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #000;
+        }
+
+        .media,
+        .page-image,
+        video {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+
+        video { object-fit: contain; }
+
+        #layout {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+        }
+
+        .layout-element {
+            position: absolute;
+            overflow: hidden;
+        }
+
+        .layout-text {
+            white-space: pre-wrap;
+            word-break: break-word;
+            width: 100%;
+            height: 100%;
+        }
+
+        .layout-image {
+            width: 100%;
+            height: 100%;
+        }
+
+        #debug {
+            position: fixed;
+            z-index: 9999;
+            left: 12px;
+            bottom: 12px;
+            max-width: calc(100vw - 24px);
+            padding: 8px 10px;
+            border-radius: 6px;
+            background: rgba(0,0,0,.72);
+            color: #fff;
+            font-size: 12px;
+            line-height: 1.4;
+            display: none;
+        }
+
+        #status {
+            position: fixed;
+            z-index: 9998;
+            right: 12px;
+            top: 12px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #777;
+            display: none;
+        }
+
+        #error {
+            position: fixed;
+            z-index: 9997;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            color: #fff;
+            text-align: center;
+            padding: 30px;
+            font-size: 22px;
+        }
+    </style>
+</head>
+<body>
+    <div id="stage">
+        <div id="layout"></div>
+        <img id="image" class="media" alt="" style="display:none;">
+        <div id="pages" style="position:absolute; inset:0; display:none;"></div>
+        <video id="video" autoplay muted playsinline preload="auto" style="display:none;"></video>
+    </div>
+
+    <div id="status"></div>
+    <div id="debug"></div>
+    <div id="error"></div>
+
+<script>
+(() => {
+    "use strict";
+
+    const tvId = {{ tv_id|tojson }};
+    const PLAYER_VERSION = "1.1.0";
+    const DEBUG = new URLSearchParams(location.search).has("debug");
+
+    const stage = document.getElementById("stage");
+    const layoutEl = document.getElementById("layout");
+    const imageEl = document.getElementById("image");
+    const pagesEl = document.getElementById("pages");
+    const videoEl = document.getElementById("video");
+    const debugEl = document.getElementById("debug");
+    const statusEl = document.getElementById("status");
+    const errorEl = document.getElementById("error");
+
+    const DB_NAME = "DigitalSignageCache";
+    const DB_VERSION = 1;
+    const STORE = "media";
+    const STATE_KEY = `digital-signage-state:${tvId}`;
+
+    let dbPromise = null;
+    let state = null;
+    let currentIndex = 0;
+    let timer = null;
+    let pageTimer = null;
+    let currentObjectUrls = new Map();
+    let lastRevision = null;
+    let syncInProgress = false;
+
+    function setDebug(message) {
+        if (!DEBUG) return;
+        debugEl.textContent = message;
+        debugEl.style.display = "block";
+    }
+
+    function setConnectionStatus(online) {
+        if (!DEBUG) return;
+        statusEl.style.display = "block";
+        statusEl.style.background = online ? "#2ecc71" : "#e74c3c";
+    }
+
+    function showError(message) {
+        errorEl.textContent = message;
+        errorEl.style.display = "flex";
+    }
+
+    function hideError() {
+        errorEl.style.display = "none";
+    }
+
+    function clearTimer() {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+        if (pageTimer) {
+            clearTimeout(pageTimer);
+            pageTimer = null;
+        }
+    }
+
+    function openDb() {
+        if (dbPromise) return dbPromise;
+
+        dbPromise = new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(STORE)) {
+                    db.createObjectStore(STORE, { keyPath: "url" });
+                }
+            };
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+
+        return dbPromise;
+    }
+
+    async function dbGet(url) {
+        const db = await openDb();
+
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, "readonly");
+            const req = tx.objectStore(STORE).get(url);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function dbPut(url, blob) {
+        const db = await openDb();
+
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, "readwrite");
+            tx.objectStore(STORE).put({
+                url,
+                blob,
+                savedAt: Date.now()
+            });
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    function absoluteUrl(url) {
+        return new URL(url, location.origin).href;
+    }
+
+    function collectResourceUrls(data) {
+        const urls = new Set();
+
+        const playlist = Array.isArray(data?.playlist)
+            ? data.playlist
+            : [];
+
+        for (const item of playlist) {
+            const content = item?.content || {};
+
+            if (Array.isArray(content.pages)) {
+                for (const page of content.pages) {
+                    if (typeof page === "string") {
+                        urls.add(absoluteUrl(page));
+                    }
+                }
+            }
+
+            if (
+                content.url &&
+                (content.content_type === "image" ||
+                 content.content_type === "video")
+            ) {
+                urls.add(absoluteUrl(content.url));
+            }
+
+            if (content.content_type === "layout") {
+                const elements = content.layout?.elements || [];
+
+                for (const element of elements) {
+                    if (
+                        element?.type === "image" &&
+                        typeof element.src === "string" &&
+                        element.src.startsWith("/media/")
+                    ) {
+                        urls.add(absoluteUrl(element.src));
+                    }
+                }
+            }
+        }
+
+        return [...urls];
+    }
+
+    async function cacheResource(url) {
+        const existing = await dbGet(url);
+
+        if (existing?.blob instanceof Blob && existing.blob.size > 0) {
+            return true;
+        }
+
+        if (!navigator.onLine) return false;
+
+        try {
+            const response = await fetch(url, {
+                cache: "no-store"
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const blob = await response.blob();
+
+            if (!blob.size) {
+                throw new Error("Arquivo vazio");
+            }
+
+            await dbPut(url, blob);
+            return true;
+        } catch (error) {
+            console.warn("Falha ao armazenar mídia:", url, error);
+            return false;
+        }
+    }
+
+    async function getLocalUrl(url) {
+        const absolute = absoluteUrl(url);
+
+        if (currentObjectUrls.has(absolute)) {
+            return currentObjectUrls.get(absolute);
+        }
+
+        const record = await dbGet(absolute);
+
+        if (!record?.blob) {
+            return null;
+        }
+
+        const objectUrl = URL.createObjectURL(record.blob);
+        currentObjectUrls.set(absolute, objectUrl);
+        return objectUrl;
+    }
+
+    async function hydratePlaylist(data, allowNetwork) {
+        const cloned = JSON.parse(JSON.stringify(data));
+        const resources = collectResourceUrls(cloned);
+        const result = {
+            data: cloned,
+            ready: true
+        };
+
+        for (const url of resources) {
+            let local = await getLocalUrl(url);
+
+            if (!local && allowNetwork && navigator.onLine) {
+                await cacheResource(url);
+                local = await getLocalUrl(url);
+            }
+
+            if (local) {
+                replaceResourceUrls(cloned, url, local);
+            } else {
+                result.ready = false;
+            }
+        }
+
+        return result;
+    }
+
+    function replaceResourceUrls(data, originalAbsolute, localUrl) {
+        const original = new URL(originalAbsolute).href;
+
+        const playlist = Array.isArray(data?.playlist)
+            ? data.playlist
+            : [];
+
+        for (const item of playlist) {
+            const content = item?.content || {};
+
+            if (content.url && absoluteUrl(content.url) === original) {
+                content.url = localUrl;
+            }
+
+            if (Array.isArray(content.pages)) {
+                content.pages = content.pages.map(page =>
+                    typeof page === "string" && absoluteUrl(page) === original
+                        ? localUrl
+                        : page
+                );
+            }
+
+            if (content.content_type === "layout") {
+                const elements = content.layout?.elements || [];
+
+                for (const element of elements) {
+                    if (
+                        element?.type === "image" &&
+                        typeof element.src === "string" &&
+                        absoluteUrl(element.src) === original
+                    ) {
+                        element.src = localUrl;
+                    }
+                }
+            }
+        }
+    }
+
+    async function saveState(data) {
+        const stateToSave = {
+            ...data,
+            saved_at: Date.now()
+        };
+
+        localStorage.setItem(
+            STATE_KEY,
+            JSON.stringify(stateToSave)
+        );
+    }
+
+    function loadState() {
+        try {
+            const raw = localStorage.getItem(STATE_KEY);
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (error) {
+            console.warn("Cache de configuração inválido:", error);
+            return null;
+        }
+    }
+
+    async function prefetchManifest() {
+        if (!navigator.onLine) return;
+
+        try {
+            const response = await fetch(
+                `/api/player/${encodeURIComponent(tvId)}/cache-manifest`,
+                { cache: "no-store" }
+            );
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const manifest = await response.json();
+            const resources = Array.isArray(manifest.resources)
+                ? manifest.resources
+                : [];
+
+            let completed = 0;
+
+            for (const resource of resources) {
+                await cacheResource(absoluteUrl(resource));
+                completed++;
+                setDebug(`TV ${tvId} · cache ${completed}/${resources.length}`);
+            }
+        } catch (error) {
+            console.warn("Manifesto de cache indisponível:", error);
+        }
+    }
+
+    function showOnly(element) {
+        imageEl.style.display = "none";
+        videoEl.style.display = "none";
+        pagesEl.style.display = "none";
+        layoutEl.style.display = "none";
+        element.style.display = "block";
+    }
+
+    function scheduleNext(delayMs) {
+        clearTimer();
+        timer = setTimeout(nextItem, Math.max(500, delayMs));
+    }
+
+    function renderImage(content, durationSec) {
+        showOnly(imageEl);
+        imageEl.src = content.url;
+        imageEl.style.objectFit = "contain";
+        imageEl.onerror = () => {
+            showError(`Falha ao reproduzir: ${content.name || "imagem"}`);
+            scheduleNext(2000);
+        };
+        scheduleNext((Number(durationSec) || 10) * 1000);
+    }
+
+    function renderVideo(content) {
+        showOnly(videoEl);
+
+        videoEl.pause();
+        videoEl.removeAttribute("src");
+        videoEl.load();
+
+        videoEl.src = content.url;
+        videoEl.muted = true;
+        videoEl.autoplay = true;
+        videoEl.playsInline = true;
+
+        videoEl.onended = () => nextItem();
+        videoEl.onerror = () => {
+            showError(`Falha ao reproduzir: ${content.name || "vídeo"}`);
+            scheduleNext(2000);
+        };
+
+        const playPromise = videoEl.play();
+
+        if (playPromise?.catch) {
+            playPromise.catch(error => {
+                console.warn("Autoplay bloqueado:", error);
+            });
+        }
+    }
+
+    function renderPages(content, durationSec) {
+        showOnly(pagesEl);
+        pagesEl.innerHTML = "";
+
+        const pages = Array.isArray(content.pages)
+            ? content.pages
+            : [];
+
+        if (!pages.length) {
+            showError(`Nenhuma página disponível: ${content.name || "conteúdo"}`);
+            scheduleNext(2000);
+            return;
+        }
+
+        let pageIndex = 0;
+        const interval = (Number(durationSec) || 10) * 1000;
+
+        const showPage = () => {
+            pagesEl.innerHTML = "";
+
+            const img = document.createElement("img");
+            img.className = "page-image";
+            img.src = pages[pageIndex];
+            img.alt = "";
+
+            img.onerror = () => {
+                showError(`Falha ao carregar uma página de: ${content.name || "documento"}`);
+            };
+
+            pagesEl.appendChild(img);
+
+            pageIndex++;
+
+            if (pageIndex < pages.length) {
+                pageTimer = setTimeout(showPage, interval);
+            } else {
+                timer = setTimeout(nextItem, interval);
+            }
+        };
+
+        showPage();
+    }
+
+    function renderLayout(content, durationSec) {
+        showOnly(layoutEl);
+        layoutEl.innerHTML = "";
+
+        const layout = content.layout || {};
+        layoutEl.style.background = layout.background || "#000000";
+
+        const elements = Array.isArray(layout.elements)
+            ? layout.elements
+            : [];
+
+        for (const item of elements) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "layout-element";
+            wrapper.style.left = `${Number(item.x) || 0}%`;
+            wrapper.style.top = `${Number(item.y) || 0}%`;
+            wrapper.style.width = `${Number(item.w) || 1}%`;
+            wrapper.style.height = `${Number(item.h) || 1}%`;
+            wrapper.style.zIndex = String(Number(item.z) || 1);
+
+            if (item.type === "text") {
+                const text = document.createElement("div");
+                text.className = "layout-text";
+                text.textContent = item.text || "";
+                text.style.color = item.color || "#fff";
+                text.style.fontSize = `${Number(item.fontSize) || 32}px`;
+                text.style.fontWeight = item.bold ? "700" : "400";
+                text.style.textAlign = item.align || "left";
+                wrapper.appendChild(text);
+            }
+
+            if (item.type === "image") {
+                const img = document.createElement("img");
+                img.className = "layout-image";
+                img.src = item.src || "";
+                img.alt = "";
+                img.style.objectFit = item.objectFit || "contain";
+                wrapper.appendChild(img);
+            }
+
+            layoutEl.appendChild(wrapper);
+        }
+
+        scheduleNext((Number(durationSec) || 10) * 1000);
+    }
+
+    function currentItem() {
+        const items = Array.isArray(state?.playlist)
+            ? state.playlist
+            : [];
+
+        return items[currentIndex] || null;
+    }
+
+    function playCurrent() {
+        hideError();
+        clearTimer();
+
+        const item = currentItem();
+
+        if (!item) {
+            showError("Nenhum conteúdo configurado para esta TV.");
+            return;
+        }
+
+        const content = item.content || {};
+        setDebug(
+            `TV ${tvId} · ${state.playlist_name || "Sem playlist"} · ` +
+            `${content.name || ""} · ${state.source || "default"}`
+        );
+
+        if (content.content_type === "video") {
+            renderVideo(content);
+            return;
+        }
+
+        if (content.content_type === "layout") {
+            renderLayout(content, item.duration_sec);
+            return;
+        }
+
+        if (
+            content.content_type === "pdf" ||
+            content.content_type === "powerpoint"
+        ) {
+            renderPages(content, item.duration_sec);
+            return;
+        }
+
+        renderImage(content, item.duration_sec);
+    }
+
+    function nextItem() {
+        clearTimer();
+
+        const items = Array.isArray(state?.playlist)
+            ? state.playlist
+            : [];
+
+        if (!items.length) return;
+
+        currentIndex = (currentIndex + 1) % items.length;
+        playCurrent();
+    }
+
+    async function applyState(serverData, fromOffline = false) {
+        if (!serverData) return false;
+
+        const hydrated = await hydratePlaylist(
+            serverData,
+            !fromOffline
+        );
+
+        if (!hydrated.ready && !state) {
+            state = hydrated.data;
+            currentIndex = 0;
+            playCurrent();
+        }
+
+        if (!hydrated.ready && state) {
+            return false;
+        }
+
+        state = hydrated.data;
+        lastRevision = serverData.revision || null;
+        currentIndex = 0;
+
+        await saveState(serverData);
+        playCurrent();
+        return true;
+    }
+
+    async function syncState() {
+        if (syncInProgress) return;
+        if (!navigator.onLine) return;
+
+        syncInProgress = true;
+
+        try {
+            const response = await fetch(
+                `/api/player/${encodeURIComponent(tvId)}`,
+                { cache: "no-store" }
+            );
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const serverData = await response.json();
+            setConnectionStatus(true);
+
+            if (
+                serverData.revision &&
+                serverData.revision === lastRevision &&
+                state
+            ) {
+                return;
+            }
+
+            await applyState(serverData);
+        } catch (error) {
+            setConnectionStatus(false);
+            console.warn("Servidor indisponível; mantendo cache local.", error);
+            setDebug(`TV ${tvId} · OFFLINE · usando cache local`);
+        } finally {
+            syncInProgress = false;
+        }
+    }
+
+    async function restoreOffline() {
+        const cached = loadState();
+
+        if (!cached) return false;
+
+        try {
+            const hydrated = await hydratePlaylist(
+                cached,
+                navigator.onLine
+            );
+
+            state = hydrated.data;
+            lastRevision = cached.revision || null;
+            currentIndex = 0;
+            playCurrent();
+            setConnectionStatus(navigator.onLine);
+            setDebug(
+                `TV ${tvId} · cache local · revisão ${lastRevision || "-"}`
+            );
+            return true;
+        } catch (error) {
+            console.error("Falha ao restaurar cache:", error);
+            return false;
+        }
+    }
+
+    async function heartbeat() {
+        const item = currentItem();
+        const content = item?.content || {};
+
+        try {
+            await fetch("/api/tv/heartbeat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    tv_id: tvId,
+                    current_playlist_id: state?.playlist_id || null,
+                    current_content_id: content.id || null,
+                    current_content_name: content.name || "",
+                    player_version: PLAYER_VERSION,
+                    sync_status: "ok",
+                    last_error: ""
+                })
+            });
+        } catch (error) {
+            console.warn("Heartbeat indisponível.", error);
+        }
+    }
+
+    window.addEventListener("online", () => {
+        setConnectionStatus(true);
+        syncState();
+        prefetchManifest();
+    });
+
+    window.addEventListener("offline", () => {
+        setConnectionStatus(false);
+        setDebug(`TV ${tvId} · OFFLINE · reprodução local`);
+    });
+
+    async function init() {
+        setConnectionStatus(navigator.onLine);
+
+        const restored = await restoreOffline();
+
+        if (navigator.onLine) {
+            await syncState();
+            await prefetchManifest();
+        }
+
+        if (!restored && !state) {
+            showError("Aguardando conteúdo da TV...");
+        }
+
+        setInterval(syncState, 10000);
+        setInterval(prefetchManifest, 60000);
+        setInterval(heartbeat, 10000);
+
+        await heartbeat();
+    }
+
+    init();
+})();
+</script>
+</body>
+</html>

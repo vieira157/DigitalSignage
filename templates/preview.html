@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>
+        Pré-visualização - {{ content.name }}
+    </title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+
+            background: #111827;
+
+            color: white;
+
+            font-family: Arial, sans-serif;
+        }
+
+        header {
+            padding: 20px 30px;
+
+            background: #030712;
+
+            display: flex;
+
+            justify-content:
+                space-between;
+        }
+
+        main {
+            padding: 30px;
+
+            display: flex;
+
+            justify-content: center;
+        }
+
+        .area {
+            width: min(
+                90vw,
+                1200px
+            );
+        }
+
+        .screen {
+            width: 100%;
+
+            aspect-ratio: 16 / 9;
+
+            background: black;
+
+            overflow: hidden;
+
+            position: relative;
+        }
+
+        .screen img,
+        .screen video {
+            width: 100%;
+            height: 100%;
+
+            object-fit: contain;
+        }
+
+        .layout-element {
+            position: absolute;
+
+            overflow: hidden;
+        }
+
+        .layout-text {
+            width: 100%;
+            height: 100%;
+
+            display: flex;
+
+            align-items: center;
+
+            white-space: pre-wrap;
+        }
+
+        .controls {
+            margin-top: 20px;
+
+            padding: 20px;
+
+            background: #1f2937;
+
+            border-radius: 10px;
+        }
+
+        button,
+        select {
+            padding: 10px 15px;
+
+            border: none;
+
+            border-radius: 6px;
+
+            margin-right: 8px;
+        }
+
+        button {
+            background: #2563eb;
+
+            color: white;
+
+            cursor: pointer;
+        }
+
+        .info {
+            color: #9ca3af;
+
+            margin-top: 15px;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+
+<header>
+
+    <strong>
+        PRÉ-VISUALIZAÇÃO
+    </strong>
+
+    <span>
+        {{ content.name }}
+    </span>
+
+</header>
+
+
+<main>
+
+<div class="area">
+
+
+<div
+    class="screen"
+    id="screen"
+></div>
+
+
+<div class="controls">
+
+    <form
+        action="/admin/publish"
+        method="post"
+    >
+
+        <input
+            type="hidden"
+            name="content_id"
+            value="{{ content.id }}"
+        >
+
+
+        <strong>
+            Publicar na TV:
+        </strong>
+
+        <br><br>
+
+
+        <select name="tv_id">
+
+            {% for tv in tvs %}
+
+            <option value="{{ tv.tv_id }}">
+                {{ tv.name }}
+            </option>
+
+            {% endfor %}
+
+        </select>
+
+
+        <button>
+            🚀 Publicar
+        </button>
+
+    </form>
+
+</div>
+
+
+<div class="info">
+
+    <p>
+        Arquivo:
+        {{ content.original_filename
+           or content.filename }}
+    </p>
+
+    <p>
+        Tipo:
+        {{ content.content_type }}
+    </p>
+
+</div>
+
+
+</div>
+
+</main>
+
+
+<script>
+
+const contentType =
+    "{{ content.content_type }}";
+
+
+const fileUrl =
+    "{{ file_url }}";
+
+
+const pages =
+    {{ pages | tojson }};
+
+
+const layout =
+    {{ layout | tojson }};
+
+
+const screen =
+    document.getElementById(
+        "screen"
+    );
+
+
+function showImage() {
+
+    screen.innerHTML = `
+
+        <img
+            src="${pages[0] || fileUrl}"
+        >
+
+    `;
+
+}
+
+
+function showVideo() {
+
+    screen.innerHTML = `
+
+        <video
+            src="${fileUrl}"
+            controls
+            autoplay
+            muted
+            loop
+            playsinline
+        ></video>
+
+    `;
+
+}
+
+
+function showPages() {
+
+    if (!pages.length) {
+        return;
+    }
+
+
+    let page = 0;
+
+
+    screen.innerHTML = `
+
+        <img
+            id="preview-slide"
+            src="${pages[0]}"
+        >
+
+    `;
+
+
+    setInterval(
+        () => {
+
+            page++;
+
+            if (
+                page >= pages.length
+            ) {
+
+                page = 0;
+
+            }
+
+
+            const image =
+                document.getElementById(
+                    "preview-slide"
+                );
+
+
+            if (image) {
+
+                image.src =
+                    pages[page];
+
+            }
+
+        },
+        10000
+    );
+
+}
+
+
+function showLayout() {
+
+    screen.style.background =
+        layout.background
+        || "#000000";
+
+
+    for (
+        const element
+        of layout.elements || []
+    ) {
+
+        const wrapper =
+            document.createElement(
+                "div"
+            );
+
+
+        wrapper.className =
+            "layout-element";
+
+
+        wrapper.style.left =
+            element.x + "%";
+
+        wrapper.style.top =
+            element.y + "%";
+
+        wrapper.style.width =
+            element.w + "%";
+
+        wrapper.style.height =
+            element.h + "%";
+
+
+        if (
+            element.type ===
+            "image"
+        ) {
+
+            const image =
+                document.createElement(
+                    "img"
+                );
+
+
+            image.src =
+                element.src;
+
+
+            image.style.width =
+                "100%";
+
+            image.style.height =
+                "100%";
+
+            image.style.objectFit =
+                element.objectFit
+                || "contain";
+
+
+            wrapper.appendChild(
+                image
+            );
+
+        }
+
+
+        else if (
+            element.type ===
+            "text"
+        ) {
+
+            const text =
+                document.createElement(
+                    "div"
+                );
+
+
+            text.className =
+                "layout-text";
+
+
+            text.textContent =
+                element.text || "";
+
+
+            text.style.color =
+                element.color
+                || "#ffffff";
+
+
+            text.style.fontWeight =
+                element.bold
+                ? "bold"
+                : "normal";
+
+
+            text.style.textAlign =
+                element.align
+                || "left";
+
+
+            text.style.fontSize =
+                (
+                    element.fontSize || 32
+                )
+                +
+                "px";
+
+
+            wrapper.appendChild(
+                text
+            );
+
+        }
+
+
+        screen.appendChild(
+            wrapper
+        );
+
+    }
+
+}
+
+
+if (
+    contentType ===
+    "image"
+) {
+
+    showImage();
+
+}
+
+
+else if (
+    contentType ===
+    "video"
+) {
+
+    showVideo();
+
+}
+
+
+else if (
+    contentType === "pdf"
+    ||
+    contentType === "powerpoint"
+) {
+
+    showPages();
+
+}
+
+
+else if (
+    contentType === "layout"
+) {
+
+    showLayout();
+
+}
+
+</script>
+
+
+</body>
+
+</html>

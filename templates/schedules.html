@@ -1,0 +1,44 @@
+{% extends "base_admin.html" %}
+{% block title %}Agendamentos - Digital Signage{% endblock %}
+{% block page_title %}Agendamentos{% endblock %}
+{% block page_subtitle %}Calendário semanal, regras por TV e detecção de conflitos{% endblock %}
+{% block top_actions %}<button class="btn primary" type="button" id="newScheduleBtn">＋ Novo agendamento</button>{% endblock %}
+{% block extra_style %}
+.schedule-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}.schedule-toolbar select{min-width:220px}.calendar{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:8px;overflow:auto;padding-bottom:4px}.day{min-width:150px;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}.day-head{padding:9px 10px;background:#f8fafc;border-bottom:1px solid #edf0f4;font-size:11px;font-weight:800}.day-body{padding:7px;display:grid;gap:7px;min-height:110px}.slot{border:1px solid #dbe4f0;border-left:3px solid var(--blue);border-radius:7px;padding:8px;background:#fbfdff}.slot.conflict{border-left-color:#dc2626;background:#fff7f7}.slot.disabled{opacity:.55}.slot strong{font-size:11px;display:block}.slot span{font-size:10px;color:var(--muted);display:block;margin-top:2px}.slot .time{font-weight:800;color:#475467}.conflict-badge{display:inline-flex;margin-top:5px;background:var(--red-soft);color:var(--red);font-size:9px;font-weight:800;border-radius:99px;padding:3px 6px}.modal{position:fixed;inset:0;background:rgba(15,23,42,.62);display:none;align-items:center;justify-content:center;z-index:250;padding:22px}.modal.open{display:flex}.modal-card{width:min(660px,96vw);background:#fff;border-radius:14px;overflow:hidden}.modal-head{padding:17px 19px;border-bottom:1px solid #edf0f4;display:flex;justify-content:space-between;align-items:center}.modal-body{padding:18px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.full{grid-column:1/-1}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}.row-actions{display:flex;gap:6px}.row-actions form{margin:0}@media(max-width:1000px){.calendar{grid-template-columns:repeat(4,minmax(160px,1fr))}}@media(max-width:760px){.calendar{grid-template-columns:repeat(2,minmax(150px,1fr))}.form-grid{grid-template-columns:1fr}.full{grid-column:auto}}
+{% endblock %}
+{% block content %}
+<style>
+/* Visibilidade de ações; autorização obrigatória nas rotas FastAPI. */
+body.role-viewer #newScheduleBtn, body.role-editor #newScheduleBtn,
+body.role-viewer .row-actions, body.role-editor .row-actions,
+body.role-viewer #scheduleModal, body.role-editor #scheduleModal,
+body.role-viewer #uploadBtn, body.role-viewer #deleteSelected,
+body.role-viewer #addPlaylist, body.role-viewer .rename-toggle,
+body.role-viewer .rename-box, body.role-viewer .create-panel,
+body.role-viewer .upload-open, body.role-viewer .publish-review,
+body.role-viewer .item .duration form, body.role-viewer .item .order,
+body.role-viewer .playlist .select, body.role-viewer .playlist .handle,
+body.role-viewer .publish-grid form, body.role-viewer .version-row form,
+body.role-viewer .playlist-head form, body.role-viewer .toolbar-right button,
+body.role-editor .publish-review, body.role-editor .publish-grid form,
+.playlist.read-only .upload-open, .playlist.read-only .publish-review,
+.playlist.read-only .item .duration form, .playlist.read-only .item .order,
+.playlist.read-only .playlist-head form, .playlist.read-only .version-row form,
+.playlist.read-only .playlist-toolbar [data-alpha-sort],
+.playlist.read-only .toolbar-right button {display:none!important}
+body.role-viewer .item input, .playlist.read-only .item input {pointer-events:none}
+</style>
+
+<div class="notice"><strong>Prioridade:</strong> durante a janela agendada a playlist da regra substitui a playlist padrão. Regras sobrepostas para a mesma TV são bloqueadas na criação e conflitos antigos aparecem destacados.</div>
+<div class="schedule-toolbar" style="margin-top:14px"><select id="tvFilter" onchange="filterSchedules()"><option value="">Todas as TVs</option>{% for tv in tvs %}<option value="{{ tv.tv_id }}">{{ tv.name }} · {{ tv.tv_id }}</option>{% endfor %}</select><span class="muted" style="font-size:11px">{{ schedules|length }} regra(s) cadastrada(s)</span></div>
+<section class="panel"><div class="panel-head"><div><h2>Calendário semanal</h2><p>Visualização rápida por dia da semana.</p></div></div><div style="padding:14px"><div class="calendar">{% for day in days %}<div class="day"><div class="day-head">{{ day.name }}</div><div class="day-body">{% for s in day.schedules %}<div class="slot {{ 'conflict' if s.id in conflict_ids else '' }} {{ 'disabled' if not s.enabled else '' }}" data-tv="{{ s.tv_id }}"><strong>{{ s.tv_name }}</strong><span>{{ s.playlist_name }}</span><span class="time">{{ s.start_time }} → {{ s.end_time }}</span>{% if s.id in conflict_ids %}<span class="conflict-badge">Conflito</span>{% endif %}</div>{% else %}<span class="muted" style="font-size:10px">Sem regras</span>{% endfor %}</div></div>{% endfor %}</div></div></section>
+
+<section class="panel" style="margin-top:16px"><div class="panel-head"><div><h2>Regras cadastradas</h2><p>Ative, desative ou exclua regras existentes.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>TV</th><th>Playlist</th><th>Dia</th><th>Horário</th><th>Status</th><th>Conflito</th><th>Ações</th></tr></thead><tbody>{% for s in schedules %}<tr data-tv="{{ s.tv_id }}"><td><strong>{{ s.tv_name }}</strong><div class="muted">{{ s.tv_id }}</div></td><td>{{ s.playlist_name }}</td><td>{{ s.day_name }}</td><td><strong>{{ s.start_time }} → {{ s.end_time }}</strong></td><td><span class="badge {{ 'green' if s.enabled else '' }}">{{ 'Ativo' if s.enabled else 'Desativado' }}</span></td><td>{% if s.id in conflict_ids %}<span class="badge red">Conflito</span>{% else %}—{% endif %}</td><td><div class="row-actions"><form action="/admin/schedule/{{ s.id }}/toggle" method="post"><button class="btn secondary" type="submit">{{ 'Desativar' if s.enabled else 'Ativar' }}</button></form><form action="/admin/schedule/{{ s.id }}/delete" method="post" onsubmit="return confirm('Excluir este agendamento?');"><button class="btn danger-outline" type="submit">Excluir</button></form></div></td></tr>{% else %}<tr><td colspan="7" class="empty">Nenhum agendamento cadastrado.</td></tr>{% endfor %}</tbody></table></div></section>
+
+<div class="modal" id="scheduleModal"><div class="modal-card"><div class="modal-head"><div><strong>Novo agendamento</strong><div class="muted" style="font-size:11px;margin-top:3px">O servidor validará conflitos antes de salvar.</div></div><button class="btn ghost" type="button" id="closeModal">Fechar</button></div><div class="modal-body"><form action="/admin/schedule" method="post"><div class="form-grid"><div class="field"><label>TV / Player</label><select name="tv_id" required><option value="">Selecione...</option>{% for tv in tvs %}<option value="{{ tv.tv_id }}">{{ tv.name }} · {{ tv.tv_id }}</option>{% endfor %}</select></div><div class="field"><label>Playlist publicada</label><select name="playlist_id" required><option value="">Selecione...</option>{% for playlist in playlists %}<option value="{{ playlist.id }}">{{ playlist.name }}</option>{% endfor %}</select></div><div class="field"><label>Dia</label><select name="day_of_week" required>{% for d in days %}<option value="{{ d.index }}">{{ d.name }}</option>{% endfor %}</select></div><div class="field"><label>Início</label><input type="time" name="start_time" value="07:00" required></div><div class="field"><label>Fim</label><input type="time" name="end_time" value="17:00" required></div><div class="full notice">Início e fim iguais = dia inteiro. Uma regra como 22:00 → 06:00 atravessa a meia-noite e também será comparada com regras do dia seguinte.</div></div><div class="actions"><button class="btn secondary" type="button" id="cancelModal">Cancelar</button><button class="btn primary" type="submit">Criar agendamento</button></div></form></div></div></div>
+{% endblock %}
+{% block extra_script %}
+<script>
+const modal=document.getElementById('scheduleModal');function openModal(){modal.classList.add('open')}function closeModal(){modal.classList.remove('open')}document.getElementById('newScheduleBtn').addEventListener('click',openModal);document.getElementById('closeModal').addEventListener('click',closeModal);document.getElementById('cancelModal').addEventListener('click',closeModal);function filterSchedules(){const v=document.getElementById('tvFilter').value;document.querySelectorAll('[data-tv]').forEach(x=>x.style.display=!v||x.dataset.tv===v?'':'none')}
+</script>
+{% endblock %}
