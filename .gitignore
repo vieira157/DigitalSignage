@@ -93,3 +93,25 @@ LEIA-ME_ATUALIZACAO_*.md
 # Cópias e pacotes completos do sistema
 DigitalSignageServer*.zip
 SISTEMA ATUAL*.zip
+
+# Qualquer configuração de ambiente real, em qualquer pasta
+*.env
+**/*.env
+
+# Permitir somente arquivos de ambiente de exemplo
+!*.env.example
+!**/*.env.example
+
+# Arquivos auxiliares e temporários do SQLite
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+
+# Todo o conteúdo operacional de mídia
+media/
