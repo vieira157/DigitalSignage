@@ -1,0 +1,8 @@
+{
+  "version": "3.2.1-stable",
+  "channel": "stable",
+  "status": "stable",
+  "min_server_version": "2.2.1",
+  "restart_required": true,
+  "notes": "Correção do bootstrap/systemd --user para instalações sem sessão gráfica; mantém provisionamento, watchdog de rede e atualização remota."
+}

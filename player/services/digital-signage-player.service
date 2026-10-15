@@ -1,0 +1,15 @@
+[Unit]
+Description=Digital Signage Player
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/DigitalSignagePlayer
+EnvironmentFile=-%h/DigitalSignagePlayer/player.env
+ExecStart=/usr/bin/python3 %h/DigitalSignagePlayer/local_player.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

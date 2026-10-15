@@ -1,0 +1,9 @@
+[Unit]
+Description=Digital Signage Network Watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/digital-signage/player.env
+Environment=DS_PLAYER_ENV=/etc/digital-signage/player.env
+ExecStart=/usr/bin/python3 /opt/digital-signage-player/network_watchdog.py

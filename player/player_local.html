@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+    <title>Digital Signage Player v3</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        #stage {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            background: #000;
+        }
+
+        .media {
+            position: absolute;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+
+        /*
+         * IMPORTANTE:
+         * NÃO EXISTE transition, fade, opacity animada
+         * ou transform neste player.
+         */
+
+        #message {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+            background: #000;
+            color: #ddd;
+            text-align: center;
+            font-size: 20px;
+            z-index: 5;
+        }
+
+        #debug {
+            position: fixed;
+            z-index: 9999;
+            left: 10px;
+            bottom: 10px;
+            max-width: calc(100vw - 20px);
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, .80);
+            color: #fff;
+            font: 12px/1.4 monospace;
+            white-space: pre-wrap;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+<div id="stage">
+    <div id="message"></div>
+</div>
+
+<div id="debug"></div>
+
+<script>
+(() => {
+    "use strict";
+
+    const STATE_POLL_MS = 5000;
+    const TELEMETRY_MS = 1000;
+    const IMAGE_DEFAULT_SECONDS = 10;
+
+    const DEBUG = new URLSearchParams(
+        location.search
+    ).has("debug");
+
+    const stage = document.getElementById("stage");
+    const messageEl = document.getElementById("message");
+    const debugEl = document.getElementById("debug");
+
+    const browserSession = (
+        `${Date.now()}-`
+        + Math.random().toString(16).slice(2)
+    );
+
+    let state = null;
+    let revision = null;
+    let initialized = false;
+
+    let currentIndex = 0;
+    let currentNode = null;
+    let itemTimer = null;
+
+    let itemStartedAt = Date.now() / 1000;
+    let renderState = "boot";
+
+    let videoLastEvent = "";
+    let videoLastError = "";
+    let videoPlayError = "";
+
+    let renderToken = 0;
+
+
+    // ========================================================
+    // UI / LOG
+    // ========================================================
+
+    function debug(message) {
+        if (!DEBUG) return;
+
+        debugEl.style.display = "block";
+        debugEl.textContent = message;
+    }
+
+
+    function showMessage(message) {
+        messageEl.textContent = message;
+        messageEl.style.display = "flex";
+    }
+
+
+    function hideMessage() {
+        messageEl.style.display = "none";
+    }
+
+
+    function clearItemTimer() {
+        if (itemTimer) {
+            clearTimeout(itemTimer);
+        }
+
+        itemTimer = null;
+    }
+
+
+    // ========================================================
+    // LIMPEZA DE MÍDIA
+    // ========================================================
+
+    function destroyNode(node) {
+        if (!node) return;
+
+        try {
+            if (
+                node.tagName
+                && node.tagName.toLowerCase() === "video"
+            ) {
+                node.pause();
+
+                node.removeAttribute("src");
+
+                while (node.firstChild) {
+                    node.removeChild(node.firstChild);
+                }
+
+                node.load();
+            }
+        } catch (_) {}
+
+        try {
+            node.remove();
+        } catch (_) {}
+    }
+
+
+    function swapNode(newNode) {
+        const oldNode = currentNode;
+
+        newNode.classList.add("media");
+
+        stage.insertBefore(
+            newNode,
+            messageEl
+        );
+
+        currentNode = newNode;
+
+        if (oldNode && oldNode !== newNode) {
+            destroyNode(oldNode);
+        }
+
+        hideMessage();
+    }
+
+
+    function resetVideoDiagnostics() {
+        videoLastEvent = "";
+        videoLastError = "";
+        videoPlayError = "";
+    }
+
+
+    // ========================================================
+    // PLAYLIST
+    // ========================================================
+
+    function playlist() {
+        return Array.isArray(state?.playlist)
+            ? state.playlist
+            : [];
+    }
+
+
+    function currentItem() {
+        return playlist()[currentIndex] || null;
+    }
+
+
+    function nextItem() {
+        clearItemTimer();
+
+        const items = playlist();
+
+        if (!items.length) {
+            showMessage(
+                "Nenhum conteúdo disponível."
+            );
+            return;
+        }
+
+        currentIndex = (
+            currentIndex + 1
+        ) % items.length;
+
+        renderCurrent();
+    }
+
+
+    function scheduleNext(seconds) {
+        clearItemTimer();
+
+        const safeSeconds = Math.max(
+            1,
+            Number(seconds)
+            || IMAGE_DEFAULT_SECONDS
+        );
+
+        itemTimer = setTimeout(
+            nextItem,
+            safeSeconds * 1000
+        );
+    }
+
+
+    // ========================================================
+    // IMAGEM
+    // ========================================================
+
+    function renderImage(
+        content,
+        durationSec,
+        token
+    ) {
+        renderState = "loading";
+
+        const image = new Image();
+
+        image.alt = "";
+        image.decoding = "async";
+        image.draggable = false;
+
+        image.onload = () => {
+            if (token !== renderToken) {
+                destroyNode(image);
+                return;
+            }
+
+            swapNode(image);
+
+            renderState = "visible";
+
+            reportPlayback(true);
+
+            scheduleNext(durationSec);
+        };
+
+        image.onerror = () => {
+            if (token !== renderToken) return;
+
+            renderState = "error";
+
+            debug(
+                `Erro carregando imagem: `
+                + `${content.name || content.url}`
+            );
+
+            reportPlayback(true);
+
+            // Não deixa o player eternamente preso.
+            itemTimer = setTimeout(
+                nextItem,
+                2000
+            );
+        };
+
+        image.src = content.url || "";
+    }
+
+
+    // ========================================================
+    // VÍDEO
+    // ========================================================
+
+    function renderVideo(
+        content,
+        token
+    ) {
+        renderState = "loading";
+        resetVideoDiagnostics();
+
+        /*
+         * Sempre criamos um NOVO <video>.
+         * Não reaproveitamos o elemento da reprodução anterior.
+         */
+        const video = document.createElement(
+            "video"
+        );
+
+        video.autoplay = false;
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.controls = false;
+
+        const event = name => {
+            videoLastEvent = name;
+            reportPlayback(true);
+        };
+
+        video.addEventListener(
+            "loadstart",
+            () => event("loadstart")
+        );
+
+        video.addEventListener(
+            "loadedmetadata",
+            () => event("loadedmetadata")
+        );
+
+        video.addEventListener(
+            "loadeddata",
+            () => event("loadeddata")
+        );
+
+        video.addEventListener(
+            "canplay",
+            () => event("canplay")
+        );
+
+        video.addEventListener(
+            "waiting",
+            () => event("waiting")
+        );
+
+        video.addEventListener(
+            "stalled",
+            () => event("stalled")
+        );
+
+        video.addEventListener(
+            "suspend",
+            () => event("suspend")
+        );
+
+        video.addEventListener(
+            "playing",
+            () => {
+                if (token !== renderToken) {
+                    destroyNode(video);
+                    return;
+                }
+
+                renderState = "visible";
+                event("playing");
+            }
+        );
+
+        video.addEventListener(
+            "pause",
+            () => event("pause")
+        );
+
+        video.addEventListener(
+            "ended",
+            () => {
+                if (token !== renderToken) return;
+
+                renderState = "ended";
+                event("ended");
+
+                /*
+                 * Mantemos o último frame até o próximo
+                 * conteúdo estar pronto. nextItem() fará
+                 * a troca limpa.
+                 */
+                nextItem();
+            }
+        );
+
+        video.addEventListener(
+            "error",
+            () => {
+                if (token !== renderToken) return;
+
+                const error = video.error;
+
+                videoLastError = error
+                    ? (
+                        `code=${error.code} `
+                        + `message=${error.message || ""}`
+                    )
+                    : "video.error sem detalhes";
+
+                renderState = "error";
+
+                event("error");
+
+                itemTimer = setTimeout(
+                    nextItem,
+                    2000
+                );
+            }
+        );
+
+        /*
+         * Se já havia outro vídeo, liberamos primeiro o decoder.
+         * Em vídeo -> imagem, a imagem é pré-carregada e o
+         * frame anterior pode permanecer até a imagem estar pronta.
+         */
+        if (
+            currentNode
+            && currentNode.tagName
+            && currentNode.tagName.toLowerCase()
+                === "video"
+        ) {
+            const oldVideo = currentNode;
+            currentNode = null;
+            destroyNode(oldVideo);
+        }
+
+        video.src = content.url || "";
+        video.load();
+
+        const startPlayback = async () => {
+            if (token !== renderToken) {
+                destroyNode(video);
+                return;
+            }
+
+            /*
+             * Só colocamos o vídeo na tela quando ele já possui
+             * dados suficientes para iniciar.
+             */
+            swapNode(video);
+
+            try {
+                const result = video.play();
+
+                if (
+                    result
+                    && typeof result.catch === "function"
+                ) {
+                    await result;
+                }
+
+            } catch (error) {
+                videoPlayError = (
+                    `${error?.name || "Error"}: `
+                    + `${error?.message || String(error)}`
+                );
+
+                renderState = "error";
+                videoLastEvent = (
+                    "play-promise-rejected"
+                );
+
+                reportPlayback(true);
+
+                itemTimer = setTimeout(
+                    nextItem,
+                    2000
+                );
+            }
+        };
+
+        /*
+         * loadeddata é suficiente para iniciar localmente e
+         * evita esperar eventos de rede desnecessários.
+         */
+        video.addEventListener(
+            "loadeddata",
+            startPlayback,
+            { once: true }
+        );
+    }
+
+
+    // ========================================================
+    // RENDER
+    // ========================================================
+
+    function renderCurrent() {
+        clearItemTimer();
+
+        const item = currentItem();
+
+        if (!item) {
+            renderState = "empty";
+
+            showMessage(
+                "Aguardando conteúdo..."
+            );
+
+            reportPlayback(true);
+            return;
+        }
+
+        const content = item.content || {};
+
+        renderToken += 1;
+
+        const token = renderToken;
+
+        itemStartedAt = Date.now() / 1000;
+
+        renderState = "loading";
+
+        reportPlayback(true);
+
+        debug(
+            `TV: ${state?.tv_id || "?"}\n`
+            + `Playlist: ${state?.playlist_name || "?"}\n`
+            + `Índice: ${currentIndex}\n`
+            + `Conteúdo: ${content.name || "?"}\n`
+            + `Tipo: ${content.content_type || "?"}\n`
+            + `Revision: ${state?.revision || "?"}`
+        );
+
+        if (content.content_type === "video") {
+            renderVideo(
+                content,
+                token
+            );
+
+            return;
+        }
+
+        if (content.content_type === "image") {
+            renderImage(
+                content,
+                item.duration_sec,
+                token
+            );
+
+            return;
+        }
+
+        renderState = "error";
+
+        debug(
+            `Tipo não suportado: `
+            + `${content.content_type}`
+        );
+
+        itemTimer = setTimeout(
+            nextItem,
+            2000
+        );
+    }
+
+
+    // ========================================================
+    // TELEMETRIA
+    // ========================================================
+
+    async function reportPlayback(
+        force = false
+    ) {
+        const item = currentItem();
+
+        if (!item) {
+            return;
+        }
+
+        const content = item.content || {};
+
+        let position = Math.max(
+            0,
+            Date.now() / 1000
+            - itemStartedAt
+        );
+
+        let duration = (
+            Number(item.duration_sec)
+            || null
+        );
+
+        let playbackState = (
+            renderState === "error"
+                ? "error"
+                : "playing"
+        );
+
+        let readyState = null;
+        let networkState = null;
+
+        if (
+            content.content_type === "video"
+            && currentNode
+            && currentNode.tagName
+            && currentNode.tagName.toLowerCase()
+                === "video"
+        ) {
+            const video = currentNode;
+
+            position = Number.isFinite(
+                video.currentTime
+            )
+                ? video.currentTime
+                : 0;
+
+            duration = Number.isFinite(
+                video.duration
+            )
+                ? video.duration
+                : null;
+
+            readyState = video.readyState;
+            networkState = video.networkState;
+
+            if (video.error) {
+                playbackState = "error";
+            } else if (video.ended) {
+                playbackState = "ended";
+            } else if (video.paused) {
+                playbackState = "paused";
+            } else {
+                playbackState = "playing";
+            }
+        }
+
+        const payload = {
+            browser_session: browserSession,
+            content_id: content.id || null,
+            content_name: content.name || "",
+            content_type: content.content_type || "",
+            item_id: item.id || null,
+            item_position: item.position || null,
+            current_index: currentIndex,
+            item_started_at: itemStartedAt,
+            render_state: renderState,
+            playback_position: position,
+            playback_duration: duration,
+            playback_state: playbackState,
+            video_ready_state: readyState,
+            video_network_state: networkState,
+            video_event: (
+                content.content_type === "video"
+                    ? videoLastEvent
+                    : ""
+            ),
+            video_error: (
+                content.content_type === "video"
+                    ? videoLastError
+                    : ""
+            ),
+            video_play_error: (
+                content.content_type === "video"
+                    ? videoPlayError
+                    : ""
+            ),
+        };
+
+        try {
+            await fetch(
+                "/playback",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+                    },
+                    body: JSON.stringify(
+                        payload
+                    ),
+                    cache: "no-store",
+                }
+            );
+        } catch (_) {}
+    }
+
+
+    // ========================================================
+    // ESTADO LOCAL
+    // ========================================================
+
+    async function loadState() {
+        try {
+            const response = await fetch(
+                `/state?ts=${Date.now()}`,
+                {
+                    cache: "no-store",
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(
+                    `HTTP ${response.status}`
+                );
+            }
+
+            return await response.json();
+
+        } catch (error) {
+            debug(
+                `Erro lendo /state: ${error}`
+            );
+
+            return null;
+        }
+    }
+
+
+    function stateSignature(value) {
+        return JSON.stringify({
+            revision: value?.revision || null,
+            playlist_id: (
+                value?.playlist_id || null
+            ),
+            published_version: (
+                value?.published_version || null
+            ),
+            count: (
+                Array.isArray(value?.playlist)
+                    ? value.playlist.length
+                    : 0
+            ),
+        });
+    }
+
+
+    async function pollState() {
+        const nextState = await loadState();
+
+        if (!nextState) {
+            return;
+        }
+
+        const changed = (
+            !initialized
+            || stateSignature(nextState)
+                !== stateSignature(state)
+        );
+
+        state = nextState;
+
+        if (changed) {
+            revision = nextState.revision || null;
+            currentIndex = 0;
+            initialized = true;
+
+            renderCurrent();
+        }
+    }
+
+
+    // ========================================================
+    // BOOT
+    // ========================================================
+
+    async function init() {
+        document.body.style.background = "#000";
+        stage.style.background = "#000";
+
+        showMessage(
+            "Inicializando player..."
+        );
+
+        await pollState();
+
+        if (!playlist().length) {
+            showMessage(
+                "Aguardando conteúdo..."
+            );
+        }
+
+        setInterval(
+            pollState,
+            STATE_POLL_MS
+        );
+
+        setInterval(
+            () => reportPlayback(false),
+            TELEMETRY_MS
+        );
+    }
+
+
+    window.addEventListener(
+        "beforeunload",
+        () => {
+            clearItemTimer();
+
+            if (currentNode) {
+                destroyNode(currentNode);
+            }
+        }
+    );
+
+
+    init();
+})();
+</script>
+</body>
+</html>
