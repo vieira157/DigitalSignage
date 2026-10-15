@@ -13,16 +13,16 @@
 .st-toolbar select,.st-toolbar input{border:1px solid var(--line);padding:9px 11px;border-radius:7px;background:#fff;min-width:170px}
 .st-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
 .st-metric,.st-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:17px}
-.st-metric small{font-size:11px;color:var(--muted);font-weight:700}.st-metric strong{display:block;font-size:26px;margin-top:5px}
+.st-metric small{font-size:12px;color:var(--muted);font-weight:700}.st-metric strong{display:block;font-size:26px;margin-top:5px}
 .st-notice{font-size:12px;line-height:1.55;color:var(--muted);margin:10px 0 18px}
 .st-table{width:100%;border-collapse:collapse}.st-table td,.st-table th{padding:12px;border-bottom:1px solid var(--line);text-align:left;font-size:12px}
-.st-table th{font-size:11px;text-transform:uppercase;color:var(--muted)}.st-table a{font-weight:700;text-decoration:none}
-.st-badge{display:inline-block;padding:5px 8px;border-radius:7px;background:#f3f4f6;font-size:11px;font-weight:700}
+.st-table th{font-size:12px;text-transform:uppercase;color:var(--muted)}.st-table a{font-weight:700;text-decoration:none}
+.st-badge{display:inline-block;padding:5px 8px;border-radius:7px;background:#f3f4f6;font-size:12px;font-weight:700}
 .st-badge.ok{background:#dcfce7;color:#166534}.st-badge.warning{background:#fef3c7;color:#92400e}.st-badge.error{background:#fee2e2;color:#991b1b}
 .st-charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .st-chart{padding:16px;background:#fff;border:1px solid var(--line);border-radius:10px}.st-chart h3{font-size:13px;margin:0 0 12px}
 .st-chart svg{display:block;width:100%;height:135px;background:#f8fafc;border-radius:7px}
-.st-event td{vertical-align:top}.st-event .sub{display:block;color:var(--muted);margin-top:4px;font-size:11px}
+.st-event td{vertical-align:top}.st-event .sub{display:block;color:var(--muted);margin-top:4px;font-size:12px}
 @media(max-width:900px){.st-charts{grid-template-columns:1fr}.st-table{display:block;overflow-x:auto}}
 {% endblock %}
 {% block content %}
@@ -45,7 +45,7 @@
 <section class="panel">
  <div class="panel-head"><div><h2>Resumo por TV</h2><p>Somente TVs autorizadas para sua conta.</p></div></div>
  <div class="table-wrap"><table class="st-table"><thead><tr><th>TV</th><th>Situação</th><th>Disponibilidade*</th><th>Reboots</th><th>Player</th><th>Firefox</th><th>Watchdog</th><th>Detalhes</th></tr></thead><tbody>
- {% for r in summaries %}<tr><td><strong>{{ r.name }}</strong><small style="display:block">{{ r.tv_id }} · {{ r.location or '—' }}</small></td>
+ {% for r in summaries %}<tr><td><strong>{{ r.name }}</strong><small style="display:block;font-size:12px">{{ r.tv_id }} · {{ r.location or '—' }}</small></td>
  <td><span class="st-badge {{ r.health }}">{{ r.health_label }}</span></td><td>{{ (r.availability|string)+'%' if r.availability is not none else 'Sem dados' }}</td>
  <td>{{ r.reboots }}</td><td>{{ r.player_restarts }}</td><td>{{ r.browser_restarts }}</td><td>{{ r.watchdog }}</td>
  <td><a href="/players/{{ r.tv_id }}/stability?period={{ period }}{% if night_date %}&date={{ night_date }}{% endif %}">Abrir análise →</a></td></tr>

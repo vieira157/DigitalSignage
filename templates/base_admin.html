@@ -6,55 +6,116 @@
 <title>{% block title %}Digital Signage{% endblock %}</title>
 <style>
 *{box-sizing:border-box}
-:root{--bg:#f5f7fb;--panel:#fff;--text:#172033;--muted:#738095;--line:#e5eaf1;--blue:#2563eb;--blue-dark:#1d4ed8;--blue-soft:#eff6ff;--green:#15803d;--green-soft:#ecfdf3;--red:#b42318;--red-soft:#fff1f0;--amber:#b54708;--amber-soft:#fffaeb;--purple:#6941c6;--purple-soft:#f4f3ff;--sidebar:#0f172a;--shadow:0 1px 2px rgba(16,24,40,.04)}
-html,body{margin:0;min-height:100%;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text)}body{overflow-x:hidden}
+:root{--bg:#f4f6f9;--panel:#fff;--text:#0f172a;--muted:#5b6676;--line:#e4e8ee;--blue:#2563eb;--blue-dark:#1d4ed8;--blue-soft:#eff6ff;--green:#15803d;--green-soft:#e8f5ec;--red:#b91c1c;--red-soft:#fdecec;--amber:#b45309;--amber-soft:#fef3e2;--purple:#6941c6;--purple-soft:#f4f3ff;--sidebar:#0f172a;--shadow:0 1px 2px rgba(15,23,42,.035)}
+html,body{margin:0;min-height:100%;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:14px;line-height:1.5;background:var(--bg);color:var(--text)}
+:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.skip-link{position:fixed;left:16px;top:12px;z-index:600;padding:12px 16px;background:#fff;color:var(--text);border-radius:8px;transform:translateY(-180%)}.skip-link:focus{transform:translateY(0)}
+.btn.nav-toggle{display:none}.nav-toggle[hidden]{display:none}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .app-shell{min-height:100vh;display:grid;grid-template-columns:248px minmax(0,1fr)}
-.sidebar{grid-column:1;grid-row:1;position:sticky;top:0;height:100vh;background:var(--sidebar);color:#fff;padding:24px 16px;display:flex;flex-direction:column;z-index:50}.brand{font-size:21px;font-weight:760;padding:0 10px 22px;border-bottom:1px solid rgba(255,255,255,.09);letter-spacing:-.25px}.brand small{display:block;margin-top:5px;color:#94a3b8;font-size:11px;font-weight:500}.nav{display:flex;flex-direction:column;gap:6px;margin-top:20px}.nav a{display:flex;align-items:center;gap:9px;width:100%;color:#cbd5e1;text-decoration:none;padding:11px 12px;border-radius:9px;font-size:14px;font-weight:650;white-space:nowrap}.nav a:hover{background:#172033;color:#fff}.nav a.active{background:var(--blue);color:#fff}.nav-icon{width:17px;text-align:center;opacity:.9}.sidebar-foot{margin-top:auto;padding:14px 10px 2px;color:#64748b;font-size:11px;line-height:1.5}
-.workspace{grid-column:2;grid-row:1;min-width:0}.topbar{min-height:72px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 32px;position:sticky;top:0;z-index:30}.topbar h1{margin:0;font-size:20px;letter-spacing:-.25px}.topbar .sub{font-size:12px;color:var(--muted);margin-top:3px}.top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.user-chip{font-size:11px;color:#475467;background:#f8fafc;border:1px solid var(--line);border-radius:999px;padding:7px 10px;font-weight:700}.main{padding:26px 32px 46px;max-width:1650px;margin:0 auto}
-.btn{border:1px solid transparent;border-radius:8px;padding:9px 13px;font:inherit;font-size:12px;font-weight:750;line-height:1;min-height:35px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}.btn:disabled{opacity:.5;cursor:not-allowed}.btn.primary{background:var(--blue);color:#fff}.btn.primary:hover{background:var(--blue-dark)}.btn.secondary{background:#fff;color:#344054;border-color:#d8dee8}.btn.secondary:hover{background:#f8fafc}.btn.success{background:#059669;color:#fff}.btn.danger{background:#dc2626;color:#fff}.btn.danger-outline{background:#fff;color:var(--red);border-color:#fecaca}.btn.ghost{background:transparent;color:#566174}.btn.ghost:hover{background:#f1f5f9}
-.panel{background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden}.panel+.panel{margin-top:16px}.panel-head{padding:17px 19px;border-bottom:1px solid #edf0f4;display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.panel-head h2,.panel-head h3{margin:0}.panel-head h2{font-size:18px}.panel-head h3{font-size:15px}.panel-head p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(135px,1fr));gap:12px}.metric{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 17px;box-shadow:var(--shadow)}.metric-label{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.35px}.metric-value{font-size:29px;font-weight:780;margin-top:4px;letter-spacing:-.7px}.metric-note{font-size:11px;color:#98a2b3;margin-top:4px}
-.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.35px;color:#667085}.field-help{font-size:11px;color:#8a94a6;line-height:1.45}input,select,textarea{font:inherit;color:var(--text);background:#fff;border:1px solid #d6dce5;border-radius:8px;padding:10px 11px}input:focus,select:focus,textarea:focus{outline:2px solid #bfdbfe;border-color:var(--blue)}
-.badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:11px;font-weight:700}.badge.green{background:var(--green-soft);color:var(--green)}.badge.red{background:var(--red-soft);color:var(--red)}.badge.amber{background:var(--amber-soft);color:var(--amber)}.badge.blue{background:var(--blue-soft);color:var(--blue)}.badge.purple{background:var(--purple-soft);color:var(--purple)}
-.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:11px 13px;border-bottom:1px solid #edf0f4;font-size:12px;vertical-align:top}.table th{font-size:10px;text-transform:uppercase;letter-spacing:.45px;color:#667085;background:#fbfcfe}.table tr:last-child td{border-bottom:0}
+.sidebar{grid-column:1;grid-row:1;position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto;background:var(--sidebar);color:#fff;padding:24px 16px;display:flex;flex-direction:column;z-index:50}.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;padding:0 8px 24px;border-bottom:1px solid #263247;letter-spacing:-.25px}.brand-mark{display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:10px;background:var(--blue)}.brand-mark svg{width:22px;height:22px}.brand small{display:block;margin-top:2px;color:#cbd5e1;font-size:12px;font-weight:400}.nav{display:flex;flex-direction:column;gap:20px;margin:24px 0}.nav-group{display:grid;gap:4px;min-width:0}.nav-label{margin:0 12px 4px;color:#94a3b8;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}.nav a{display:flex;align-items:center;gap:10px;min-height:44px;min-width:0;color:#cbd5e1;text-decoration:none;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:500;overflow-wrap:anywhere}.nav a:hover{background:#1e293b;color:#fff}.nav a.active{background:var(--blue);color:#fff;font-weight:600}.nav-icon{flex:none;width:18px;text-align:center}.sidebar :focus-visible{outline-color:#93c5fd}.sidebar-foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid #263247;color:#cbd5e1;font-size:12px;overflow-wrap:anywhere}.sidebar-user{display:flex;align-items:center;justify-content:space-between;gap:8px}.sidebar-user>div{min-width:0}.sidebar-user strong{display:block;color:#fff;font-weight:600}.sidebar-user a{display:inline-flex;align-items:center;min-height:44px;padding:8px;color:#bfdbfe}.sidebar-version{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px;color:#94a3b8}
+.workspace{grid-column:2;grid-row:1;min-width:0}.topbar{min-height:96px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;padding:24px 32px;position:sticky;top:0;z-index:30}.topbar>div{min-width:0}.topbar h1{margin:0;font-size:24px;line-height:1.25;font-weight:650;letter-spacing:-.4px;overflow-wrap:anywhere}.topbar .sub{font-size:14px;color:var(--muted);margin-top:6px;overflow-wrap:anywhere}.top-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:100%}.user-chip{font-size:12px;color:var(--muted);background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-weight:500;overflow-wrap:anywhere}.main{padding:24px 32px 48px;max-width:1650px;margin:0 auto;min-width:0}.main:focus{outline:3px solid var(--blue);outline-offset:-3px}.main:focus:not(:focus-visible):not(.skip-focused){outline-color:transparent}
+.btn{border:1px solid transparent;border-radius:8px;padding:10px 14px;font:inherit;font-size:13px;font-weight:600;line-height:1.4;min-height:40px;max-width:100%;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:normal;overflow-wrap:anywhere;text-align:center}.btn:disabled{opacity:.5;cursor:not-allowed}.btn.primary{background:var(--blue);color:#fff}.btn.primary:hover{background:var(--blue-dark)}.btn.secondary{background:#fff;color:var(--text);border-color:var(--line)}.btn.secondary:hover{background:#f8fafc;border-color:#b8c2cf}.btn.success{background:var(--green);color:#fff}.btn.danger{background:var(--red);color:#fff}.btn.danger-outline{background:#fff;color:var(--red);border-color:#fecaca}.btn.ghost{background:transparent;color:var(--muted)}.btn.ghost:hover{background:#f1f5f9}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;min-width:0}.panel+.panel{margin-top:16px}.panel-head{padding:20px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px}.panel-head>div{min-width:0}.panel-head h2,.panel-head h3{margin:0;overflow-wrap:anywhere}.panel-head h2{font-size:18px;font-weight:650}.panel-head h3{font-size:16px;font-weight:600}.panel-head p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow);min-width:0;overflow-wrap:anywhere}.metric-label{font-size:13px;color:var(--muted);font-weight:500}.metric-value{font-size:32px;line-height:1.2;font-weight:700;margin-top:12px;letter-spacing:-.7px;font-variant-numeric:tabular-nums}.metric-note{font-size:12px;color:var(--muted);margin-top:8px}
+.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.35px;color:var(--muted)}.field-help{font-size:12px;color:var(--muted);line-height:1.5}input,select,textarea{font:inherit;color:var(--text);background:#fff;border:1px solid #b8c2cf;border-radius:8px;padding:10px 11px}input:focus,select:focus,textarea:focus{border-color:var(--blue)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:12px;font-weight:600}.badge.green{background:var(--green-soft);color:#166534}.badge.red{background:var(--red-soft);color:var(--red)}.badge.amber{background:var(--amber-soft);color:var(--amber)}.badge.blue{background:var(--blue-soft);color:var(--blue)}.badge.purple{background:var(--purple-soft);color:var(--purple)}
+.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);font-size:12px;vertical-align:top}.table th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:#f8fafc}.table tr:last-child td{border-bottom:0}
 .notice{border:1px solid #bfdbfe;background:var(--blue-soft);color:#1e3a8a;border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.55}.notice.warning{background:var(--amber-soft);border-color:#fedf89;color:#92400e}.notice.danger{background:var(--red-soft);border-color:#fecaca;color:#991b1b}.empty{padding:38px 22px;text-align:center;color:var(--muted)}.muted{color:var(--muted)}
-.toast-stack{position:fixed;right:22px;bottom:22px;z-index:500;display:grid;gap:8px;width:min(390px,calc(100vw - 32px))}.toast{padding:12px 14px;border-radius:10px;color:#fff;font-size:12px;font-weight:700;box-shadow:0 12px 32px rgba(15,23,42,.2);animation:toast-in .18s ease}.toast.success{background:#047857}.toast.error{background:#b42318}.toast.warning{background:#b54708}.toast.info{background:#1d4ed8}@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.toast-stack{position:fixed;right:16px;bottom:16px;z-index:500;display:grid;gap:8px;width:min(390px,calc(100vw - 32px));pointer-events:none}.toast{padding:12px 14px;border-radius:10px;background:var(--text);color:#fff;font-size:13px;font-weight:600;overflow-wrap:anywhere;box-shadow:0 4px 16px rgba(15,23,42,.12);animation:toast-in .18s ease}.toast.success{background:var(--green)}.toast.error{background:var(--red)}.toast.warning{background:var(--amber)}.toast.info{background:var(--blue-dark)}@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .loading-dot{width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-@media(max-width:1100px){.app-shell{grid-template-columns:210px minmax(0,1fr)}.sidebar{padding:20px 12px}.main{padding:22px 20px 38px}.metrics{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.app-shell{grid-template-columns:168px minmax(0,1fr)}.sidebar{padding:18px 9px}.brand{font-size:16px;padding-left:7px;padding-right:7px}.nav a{font-size:11px;padding:9px 8px}.nav-icon{display:none}.topbar{padding:12px 14px}.topbar h1{font-size:17px}.main{padding:17px 11px 30px}.metrics{grid-template-columns:1fr 1fr}.top-actions .hide-small{display:none}}
+@media(max-width:1100px){.app-shell{grid-template-columns:220px minmax(0,1fr)}.sidebar{padding:20px 12px}.main,.topbar{padding:24px 20px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.app-shell{display:block}.sidebar{position:relative;height:auto;overflow:visible;padding:16px;z-index:auto}.brand{padding:0 4px 16px}.nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.nav a{padding:10px 8px;min-height:44px}.nav-label{margin-left:8px}.sidebar-foot{padding-top:12px}.sidebar-version{margin-top:8px}.topbar{position:static;padding:20px 16px;gap:16px}.topbar h1{font-size:22px}.top-actions{justify-content:flex-start;width:100%;gap:8px}.main{padding:20px 16px 32px}.metrics{gap:12px}.metric{padding:16px}.metric-value{font-size:28px}.panel-head{padding:16px}.btn{min-height:44px}.top-actions .hide-small{display:inline-flex}}
+@media(max-width:760px){.btn.nav-toggle{display:inline-flex;margin:12px 16px;background:var(--sidebar);color:#fff}.js-nav .sidebar{display:none}.js-nav .sidebar.mobile-open{display:flex;position:fixed;inset:72px 12px 12px;height:auto;max-height:calc(100vh - 84px);max-height:calc(100dvh - 84px);overflow-y:auto;z-index:100;border-radius:12px}.js-nav .sidebar.mobile-open .nav{display:flex}.js-nav .sidebar.mobile-open .sidebar-foot{margin-top:0}.nav-toggle[aria-expanded="true"]{position:relative;z-index:101}}
+@media(max-width:360px){.nav,.metrics{grid-template-columns:minmax(0,1fr)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 {% block extra_style %}{% endblock %}
 </style>
 </head>
 <body class="role-{{ request.state.user.role if request.state.user else 'anonymous' }}">
+<a class="skip-link" href="#main-content">Ir para o conteúdo</a>
+<button class="btn nav-toggle" type="button" id="nav-toggle" aria-controls="admin-sidebar" aria-expanded="false" hidden>Menu de navegação</button>
 <div class="app-shell">
-<aside class="sidebar">
-  <div class="brand">Digital Signage<small>Console corporativo</small></div>
-  <nav class="nav">
+<aside class="sidebar" id="admin-sidebar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><div>Digital Signage<small>Console corporativo</small></div></div>
+  <nav class="nav" aria-label="Navegação principal">
     {% set p = request.url.path %}
-    <a href="/admin" class="{{ 'active' if p == '/admin' else '' }}"><span class="nav-icon">⌂</span>Dashboard</a>
-    <a href="/players" class="{{ 'active' if p.startswith('/players') else '' }}"><span class="nav-icon">▣</span>TVs / Players</a>
-    <a href="/players/stability" class="{{ 'active' if p == '/players/stability' or p.endswith('/stability') else '' }}"><span class="nav-icon">◷</span>Estabilidade</a>
-    <a href="/gallery" class="{{ 'active' if p.startswith('/gallery') else '' }}"><span class="nav-icon">▧</span>Galeria</a>
-    <a href="/playlists" class="{{ 'active' if p.startswith('/playlists') or p.startswith('/playlist/') else '' }}"><span class="nav-icon">☷</span>Playlists</a>
-    <a href="/schedules" class="{{ 'active' if p.startswith('/schedules') else '' }}"><span class="nav-icon">◫</span>Agendamentos</a>
+    {% set stability_active = p == '/players/stability' or (p.startswith('/players/') and p.endswith('/stability')) %}
+    {% macro nav_link(href, label, symbol, active) -%}
+    <a href="{{ href }}" class="{{ 'active' if active else '' }}"{% if active %} aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ symbol }}</span>{{ label }}</a>
+    {%- endmacro %}
+    <div class="nav-group" role="group" aria-labelledby="nav-overview">
+      <p class="nav-label" id="nav-overview">Visão geral</p>
+      {{ nav_link('/admin', 'Visão Geral', '⌂', p == '/admin') }}
+    </div>
+    <div class="nav-group" role="group" aria-labelledby="nav-content">
+      <p class="nav-label" id="nav-content">Conteúdo</p>
+      {{ nav_link('/gallery', 'Biblioteca', '▧', p.startswith('/gallery')) }}
+      {{ nav_link('/playlists', 'Playlists', '☷', p.startswith('/playlists') or p.startswith('/playlist/')) }}
+    </div>
+    <div class="nav-group" role="group" aria-labelledby="nav-operation">
+      <p class="nav-label" id="nav-operation">Operação</p>
+      {{ nav_link('/players', 'Telas', '▣', p.startswith('/players') and not stability_active) }}
+      {{ nav_link('/players/stability', 'Estabilidade', '◷', stability_active) }}
+      {{ nav_link('/schedules', 'Agendamentos', '◫', p.startswith('/schedules')) }}
+    </div>
     {% if request.state.user and request.state.user.role == "admin" %}
-    <a href="/releases" class="{{ 'active' if p.startswith('/releases') else '' }}"><span class="nav-icon">⇧</span>Releases</a>
-    <a href="/users" class="{{ 'active' if p.startswith('/users') else '' }}"><span class="nav-icon">◉</span>Usuários</a>
-    <a href="/audit" class="{{ 'active' if p.startswith('/audit') else '' }}"><span class="nav-icon">◎</span>Auditoria</a>
+    <div class="nav-group" role="group" aria-labelledby="nav-admin">
+      <p class="nav-label" id="nav-admin">Administração</p>
+      {{ nav_link('/users', 'Usuários', '◉', p.startswith('/users')) }}
+      {{ nav_link('/releases', 'Versões do Player', '⇧', p.startswith('/releases')) }}
+      {{ nav_link('/audit', 'Auditoria', '◎', p.startswith('/audit')) }}
+    </div>
     {% endif %}
   </nav>
-  <div class="sidebar-foot">{% if request.state.user %}{{ request.state.user.full_name or request.state.user.username }}<br>{{ request.state.user.role_label }} · <a style="color:#93c5fd" href="/logout">sair</a><br><br>{% endif %}Servidor {{ app_version or '' }}<br>Interface v6</div>
+  <div class="sidebar-foot">{% if request.state.user %}<div class="sidebar-user"><div><strong>{{ request.state.user.full_name or request.state.user.username }}</strong>{{ request.state.user.role_label }}</div><a href="/logout">Sair</a></div>{% endif %}<div class="sidebar-version"><span>Servidor {{ app_version or '' }}</span><span>Interface v6</span></div></div>
 </aside>
 <section class="workspace">
   <header class="topbar">
     <div><h1>{% block page_title %}Digital Signage{% endblock %}</h1><div class="sub">{% block page_subtitle %}{% endblock %}</div></div>
     <div class="top-actions">{% if request.state.user %}<span class="user-chip">{{ request.state.user.username }} · {{ request.state.user.role_label }}</span>{% endif %}{% block top_actions %}{% endblock %}</div>
   </header>
-  <main class="main">{% block content %}{% endblock %}</main>
+  <main class="main" id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
 </section>
 </div>
-<div class="toast-stack" id="toastStack"></div>
+<div class="toast-stack" id="toastStack" role="status" aria-live="polite" aria-relevant="additions" aria-label="Mensagens da aplicação"></div>
 <script>
 (function(){
+  const skip=document.querySelector('.skip-link'),main=document.getElementById('main-content');
+  skip.addEventListener('click',event=>{
+    event.preventDefault();
+    main.classList.add('skip-focused');
+    main.focus({preventScroll:true});
+    main.scrollIntoView({block:'start',behavior:'instant'});
+  });
+  main.addEventListener('blur',()=>main.classList.remove('skip-focused'));
+  const navToggle=document.getElementById('nav-toggle'),sidebar=document.getElementById('admin-sidebar'),mobile=matchMedia('(max-width:760px)');
+  document.documentElement.classList.add('js-nav');
+  navToggle.hidden=false;
+  function closeNavigation(restoreFocus){
+    sidebar.classList.remove('mobile-open');
+    navToggle.setAttribute('aria-expanded','false');
+    if(restoreFocus)navToggle.focus();
+  }
+  navToggle.addEventListener('click',()=>{
+    const open=navToggle.getAttribute('aria-expanded')!=='true';
+    sidebar.classList.toggle('mobile-open',open);
+    navToggle.setAttribute('aria-expanded',String(open));
+    if(!open)navToggle.focus();
+  });
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&navToggle.getAttribute('aria-expanded')==='true'){
+      event.preventDefault();closeNavigation(true);
+    }
+  });
+  document.addEventListener('click',event=>{
+    if(navToggle.getAttribute('aria-expanded')==='true'&&!sidebar.contains(event.target)&&!navToggle.contains(event.target))closeNavigation(false);
+  });
+  document.addEventListener('focusin',event=>{
+    if(navToggle.getAttribute('aria-expanded')==='true'&&!sidebar.contains(event.target)&&event.target!==navToggle)closeNavigation(false);
+  });
+  mobile.addEventListener('change',()=>closeNavigation(sidebar.contains(document.activeElement)&&mobile.matches));
+
   window.dsToast=function(message,kind='success',timeout=3300){if(!message)return;const host=document.getElementById('toastStack');const el=document.createElement('div');el.className=`toast ${kind}`;el.textContent=message;host.appendChild(el);setTimeout(()=>el.remove(),timeout)};
   const params=new URLSearchParams(location.search);if(params.get('message')){dsToast(params.get('message'),params.get('kind')||'success',4200);params.delete('message');params.delete('kind');const q=params.toString();history.replaceState({},'',location.pathname+(q?`?${q}`:'')+location.hash)}
   const stored=sessionStorage.getItem('dsToast');if(stored){try{const data=JSON.parse(stored);dsToast(data.message,data.kind||'success')}catch(_){}sessionStorage.removeItem('dsToast')}
