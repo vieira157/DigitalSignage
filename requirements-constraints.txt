@@ -1,0 +1,21 @@
+# Runtime + test dependency graph verified from installed package metadata.
+# Python >= 3.11. Validate wheel availability on the target Linux architecture.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+h11==0.16.0
+idna==3.20
+MarkupSafe==3.0.3
+pydantic==2.13.5
+pydantic_core==2.46.5
+starlette==1.7.0
+typing_extensions==4.16.0
+typing-inspection==0.4.4
+httpcore2==2.13.1
+truststore==0.10.4
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+colorama==0.4.6; sys_platform == "win32"

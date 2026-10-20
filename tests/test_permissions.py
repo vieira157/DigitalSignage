@@ -13,6 +13,8 @@ ROOT = Path(TEST_DIR.name)
 os.environ["DS_DB_FILE"] = str(ROOT / "test.db")
 os.environ["DS_MEDIA_DIR"] = str(ROOT / "media")
 os.environ["DS_RELEASE_DIR"] = str(ROOT / "releases")
+os.environ["DS_INITIAL_ADMIN_PASSWORD"] = "temporary-test-password"
+os.environ["DS_INITIAL_CREDENTIALS_FILE"] = str(ROOT / "first_admin_credentials.txt")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient

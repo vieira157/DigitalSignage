@@ -1,5 +1,6 @@
 from datetime import datetime
 from collections import Counter
+from contextlib import closing
 import csv
 import io
 import hashlib
@@ -31,20 +32,33 @@ from fastapi.templating import Jinja2Templates
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_DIR = (
+    Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "DigitalSignage"
+    if os.name == "nt" else Path("/var/lib/digital-signage")
+)
+# Keep an existing Windows installation working until its explicit data migration.
+# New installations and Linux always default to an external data directory.
+LEGACY_WINDOWS = os.name == "nt" and (BASE_DIR / "digital_signage.db").is_file()
+DATA_DIR = BASE_DIR if LEGACY_WINDOWS else DEFAULT_DATA_DIR
 
-MEDIA_DIR = Path(os.getenv("DS_MEDIA_DIR", str(BASE_DIR / "media"))).expanduser().resolve()
+MEDIA_DIR = Path(os.getenv("DS_MEDIA_DIR", str(DATA_DIR / "media"))).expanduser().resolve()
 UPLOAD_DIR = MEDIA_DIR / "uploads"
 RENDER_DIR = MEDIA_DIR / "rendered"
-RELEASE_DIR = Path(os.getenv("DS_RELEASE_DIR", str(BASE_DIR / "releases"))).expanduser().resolve()
-CREDENTIALS_FILE = BASE_DIR / "first_admin_credentials.txt"
+RELEASE_DIR = Path(os.getenv("DS_RELEASE_DIR", str(DATA_DIR / "releases"))).expanduser().resolve()
 
-DB_FILE = Path(os.getenv("DS_DB_FILE", str(BASE_DIR / "digital_signage.db"))).expanduser().resolve()
+DB_FILE = Path(os.getenv("DS_DB_FILE", str(DATA_DIR / "digital_signage.db"))).expanduser().resolve()
+DB_WAS_NEW = not DB_FILE.exists()
+CREDENTIALS_FILE = Path(os.getenv(
+    "DS_INITIAL_CREDENTIALS_FILE",
+    str((DEFAULT_DATA_DIR if DB_FILE.is_relative_to(BASE_DIR) else DB_FILE.parent)
+        / "first_admin_credentials.txt"),
+)).expanduser().resolve()
 DB_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-MEDIA_DIR.mkdir(exist_ok=True)
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 RENDER_DIR.mkdir(exist_ok=True)
-RELEASE_DIR.mkdir(exist_ok=True)
+RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 app = FastAPI(title="Digital Signage")
@@ -60,6 +74,31 @@ templates = Jinja2Templates(
 )
 APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 APP_VERSION = "2.3.1-stability-night"
+
+
+@app.get("/health")
+def health():
+    """Readiness only: never creates a database or writes a probe file."""
+    database = "unavailable"
+    try:
+        with closing(sqlite3.connect(DB_FILE.as_uri() + "?mode=ro", uri=True, timeout=2)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("SELECT id FROM users LIMIT 1").fetchone()
+        database = "ok"
+    except (OSError, sqlite3.Error):
+        pass
+    directories = {
+        name: "ok" if path.is_dir() and os.access(path, os.R_OK | os.W_OK | os.X_OK) else "unavailable"
+        for name, path in (("media", MEDIA_DIR), ("releases", RELEASE_DIR))
+    }
+    ready = database == "ok" and all(value == "ok" for value in directories.values())
+    return JSONResponse(
+        {"status": "ok" if ready else "unavailable", "app_version": APP_VERSION,
+         "database": database, **directories,
+         "timestamp": datetime.now(APP_TIMEZONE).isoformat()},
+        status_code=200 if ready else 503,
+        headers={"Cache-Control": "no-store"},
+    )
 
 # =========================================================
 # LIBREOFFICE
@@ -550,8 +589,25 @@ def ensure_initial_admin(conn):
     count = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
     if count:
         return
+    if not DB_WAS_NEW:
+        raise RuntimeError("Banco existente sem usuários: recuperação administrativa explícita necessária.")
     username = os.getenv("DS_INITIAL_ADMIN_USER", "admin").strip() or "admin"
-    password = os.getenv("DS_INITIAL_ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+    configured_password = os.getenv("DS_INITIAL_ADMIN_PASSWORD")
+    password = configured_password or secrets.token_urlsafe(20)
+    if not configured_password:
+        if CREDENTIALS_FILE.is_relative_to(BASE_DIR):
+            raise RuntimeError("DS_INITIAL_CREDENTIALS_FILE deve ficar fora do código.")
+        CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Exclusive creation: never overwrite credentials from a previous attempt.
+        # On Windows the external directory must also have a restricted user ACL.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(CREDENTIALS_FILE, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(
+                "Digital Signage - primeiro acesso\n"
+                f"Usuário: {username}\nSenha: {password}\n"
+                "Troque a senha e remova este arquivo após o primeiro acesso.\n"
+            )
     conn.execute(
         """
         INSERT INTO users
@@ -560,15 +616,7 @@ def ensure_initial_admin(conn):
         """,
         (username, "Administrador inicial", password_hash(password), time.time()),
     )
-    try:
-        CREDENTIALS_FILE.write_text(
-            "Digital Signage - primeiro acesso\n"
-            f"URL: /login\nUsuário: {username}\nSenha: {password}\n"
-            "Troque a senha após o primeiro acesso. Apague este arquivo depois da implantação.\n",
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
+    print("[AUTH] Administrador inicial criado; senha não registrada nos logs.")
 
 
 def create_session(conn, user_id: int) -> str:
@@ -1243,7 +1291,7 @@ finally:
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     path = request.url.path
-    if path in {"/login", "/logout"} or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
+    if path in {"/health", "/login", "/logout"} or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
         return await call_next(request)
 
     def _match_prefix(prefix: str) -> bool:
@@ -1494,13 +1542,25 @@ async def releases_upload(
     safe_version = "".join(ch for ch in version if ch.isalnum() or ch in ".-_")[:60]
     if not safe_version:
         raise HTTPException(status_code=400, detail="Versão inválida.")
-    content = await package.read()
-    if len(content) <= 0:
-        raise HTTPException(status_code=400, detail="Pacote vazio.")
-    sha = hashlib.sha256(content).hexdigest()
-    filename = f"digital-signage-player-{safe_version}.zip"
+    # Unique filename avoids overwriting an existing release before DB validation.
+    filename = f"digital-signage-player-{safe_version}-{uuid.uuid4().hex}.zip"
     target = RELEASE_DIR / filename
-    target.write_bytes(content)
+    size = 0
+    digest = hashlib.sha256()
+    try:
+        with target.open("xb") as handle:
+            while chunk := await package.read(1024 * 1024):
+                size += len(chunk)
+                if size > 2 * 1024**3:
+                    raise HTTPException(status_code=413, detail="Pacote excede 2 GiB.")
+                digest.update(chunk)
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Pacote vazio.")
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    sha = digest.hexdigest()
     conn = get_db()
     try:
         conn.execute(
@@ -1509,7 +1569,7 @@ async def releases_upload(
             (version, channel, filename, original_filename, sha256, size_bytes, status, notes, created_by, created_at)
             VALUES (?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)
             """,
-            (version, channel, filename, package.filename or filename, sha, len(content), notes.strip(), user["id"], time.time()),
+            (version, channel, filename, package.filename or filename, sha, size, notes.strip(), user["id"], time.time()),
         )
         audit_event(conn, request, "release.upload", "release", version, f"Canal: {channel}; SHA256: {sha}")
         conn.commit()

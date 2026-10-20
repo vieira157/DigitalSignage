@@ -1,5 +1,9 @@
-fastapi
-uvicorn[standard]
-jinja2
-python-multipart
-PyMuPDF
+# Direct runtime dependencies pinned to the locally validated application stack.
+# Transitive pins cover only this dependency graph, not the whole Windows host.
+-c requirements-constraints.txt
+fastapi==0.141.1
+uvicorn==0.54.0
+jinja2==3.1.6
+python-multipart==0.0.32
+PyMuPDF==1.28.2
+tzdata==2026.4
