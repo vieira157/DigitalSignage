@@ -161,6 +161,7 @@
         action="/admin/publish"
         method="post"
     >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
 
         <input
             type="hidden"
@@ -270,60 +271,6 @@ function showVideo() {
         ></video>
 
     `;
-
-}
-
-
-function showPages() {
-
-    if (!pages.length) {
-        return;
-    }
-
-
-    let page = 0;
-
-
-    screen.innerHTML = `
-
-        <img
-            id="preview-slide"
-            src="${pages[0]}"
-        >
-
-    `;
-
-
-    setInterval(
-        () => {
-
-            page++;
-
-            if (
-                page >= pages.length
-            ) {
-
-                page = 0;
-
-            }
-
-
-            const image =
-                document.getElementById(
-                    "preview-slide"
-                );
-
-
-            if (image) {
-
-                image.src =
-                    pages[page];
-
-            }
-
-        },
-        10000
-    );
 
 }
 
@@ -476,21 +423,16 @@ else if (
 
 
 else if (
-    contentType === "pdf"
-    ||
-    contentType === "powerpoint"
-) {
-
-    showPages();
-
-}
-
-
-else if (
     contentType === "layout"
 ) {
 
     showLayout();
+
+}
+
+else {
+
+    screen.innerHTML = "<div style='color:white;padding:24px'>Formato legado não suportado.</div>";
 
 }
 

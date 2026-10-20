@@ -1,0 +1,22 @@
+[Unit]
+Description=Digital Signage consistent backup
+ConditionPathExists=/etc/digital-signage/server.env
+ConditionPathExists=/opt/digital-signage/app/deploy/linux/backup-server.sh
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/digital-signage/app
+ExecStart=/opt/digital-signage/app/deploy/linux/backup-server.sh --keep 14
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=digital-signage-backup
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/digital-signage /var/backups/digital-signage /run/lock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH

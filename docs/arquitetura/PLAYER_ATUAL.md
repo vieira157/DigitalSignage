@@ -15,7 +15,7 @@ Arquivos obrigatórios na instalação real: `local_player.py`, `stability_agent
 | `POST /api/player/provision` | JSON `{tv_id, code}`; retorna token do Dispositivo e release com versão, URL, SHA-256 | Código de provisionamento de uso único |
 | `GET /api/player/{tv_id}` | JSON da playlist publicada/agenda ativa, revisão e URLs de mídia | Bearer do Dispositivo via `require_device_auth` |
 | `GET /api/player/{tv_id}/cache-manifest` | JSON de recursos necessários para playlists atribuídas e agendadas | Bearer do Dispositivo |
-| `GET /media/...` | Bytes de mídia para cache local | Requisição do Player com Bearer quando configurado; conferir proteção específica da rota no Servidor |
+| `GET /media/...` | Bytes de mídia para cache local, incluindo Range/206 | Bearer do Dispositivo; o Servidor valida vínculo da mídia com a configuração da Tela |
 | `POST /api/tv/heartbeat` | JSON com `tv_id`, versão, estado de sync, telemetria, reprodução informada pelo Firefox e eventos pendentes; resposta com `accepted_stability_event_ids` | Player envia Bearer; a rota do Servidor não chama `require_device_auth` — risco existente |
 | `GET /api/player/{tv_id}/commands` | JSON `{commands: [...]}`; cada comando tem id, nome e argumentos | Bearer do Dispositivo |
 | `POST /api/player/{tv_id}/commands/{command_id}/ack` | JSON `{status, progress, message, result}` | Bearer do Dispositivo |
@@ -26,6 +26,14 @@ O servidor HTTP local usa por padrão `127.0.0.1:8765`: `GET /` ou `/index.html`
 ## Sincronização, offline, estabilidade e atualização
 
 `local_player.py` consulta configuração e manifesto em cada sync, reúne as URLs, baixa faltantes em sequência para `.part`, valida tamanho quando há `Content-Length`, promove por `os.replace` e só depois substitui `state.json`. Erro preserva estado e mídia anteriores. A validação do cache existente verifica apenas tamanho maior que zero. Órfãos saem após 24 h pelo `mtime`; recursos referenciados são preservados. O worker sequencial também cuida do Firefox, heartbeat e comandos: um download demorado pode atrasar as outras tarefas apesar dos intervalos configurados (10 s sync, 2 s heartbeat, 5 s comandos, 5 s navegador). O HTML comunica a reprodução ao serviço local; o Firefox é iniciado em kiosk e supervisionado quanto a processo e progresso de vídeo.
+
+O cliente HTTP central já envia `Authorization: Bearer` também ao baixar mídia;
+o token não aparece na URL. O Player integrado continua usando `/media/...` e o
+mesmo cache offline. Players antigos sem credencial devem ser provisionados
+antes de ativar `DS_REQUIRE_DEVICE_TOKEN=1`; `DS_ALLOW_LEGACY_PUBLIC_MEDIA=1`
+existe somente para uma transição curta e registrada. O Player Web administrativo
+usa sessão e `/api/web-player/{tv_id}`, sem receber o token físico e sem enviar
+heartbeat que possa alterar a saúde do Raspberry.
 
 `stability_agent.py` guarda em `stability_events.json` eventos de reboot detectado por `boot_id`, reinício de processo e navegador. Envia até 40 pendentes por heartbeat e remove apenas IDs aceitos na resposta. CPU, RAM e temperatura são lidas de `/proc` e `/sys`; disco por `shutil.disk_usage`; rede por utilitários/arquivos do Linux. O watchdog usa estado em `/var/lib/digital-signage` e pode executar ações privilegiadas de rede e reboot.
 

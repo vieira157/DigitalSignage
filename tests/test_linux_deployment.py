@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import sys
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,24 @@ from fastapi.testclient import TestClient
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def login(client, ds, username="testadmin", password="synthetic-password-123", headers=None):
+    client.get("/login")
+    data = {
+        "username": username,
+        "password": password,
+        "csrf_token": client.cookies.get(ds.LOGIN_CSRF_COOKIE_NAME),
+    }
+    return client.post("/login", data=data, headers=headers or {}, follow_redirects=False)
+
+
+def csrf_headers(client, ds, headers=None):
+    result = dict(headers or {})
+    result["X-CSRF-Token"] = ds.csrf_token_for_session(
+        client.cookies.get(ds.SESSION_COOKIE_NAME)
+    )
+    return result
 
 
 def load(path, name):
@@ -112,9 +131,7 @@ def test_generated_credentials_exclusive(ds, monkeypatch):
 def test_http_proxy_cookie_and_audit(ds):
     proxied = ProxyHeadersMiddleware(ds.app, trusted_hosts=["127.0.0.1"])
     client = TestClient(proxied, client=("127.0.0.1", 12345))
-    response = client.post("/login", data={"username": "testadmin", "password": "synthetic-password-123"},
-                           headers={"x-forwarded-for": "198.51.100.7", "x-forwarded-proto": "http"},
-                           follow_redirects=False)
+    response = login(client, ds, headers={"x-forwarded-for": "198.51.100.7", "x-forwarded-proto": "http"})
     assert response.status_code == 303
     cookie = response.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=lax" in cookie and "secure" not in cookie
@@ -122,28 +139,40 @@ def test_http_proxy_cookie_and_audit(ds):
     assert conn.execute("SELECT ip_address FROM audit_log WHERE action='auth.login' ORDER BY id DESC").fetchone()[0] == "198.51.100.7"
     conn.close()
     untrusted = TestClient(proxied, client=("198.51.100.9", 12345))
-    response = untrusted.post("/login", data={"username": "testadmin", "password": "synthetic-password-123"},
-                              headers={"x-forwarded-for": "198.51.100.7", "x-forwarded-proto": "https"},
-                              follow_redirects=False)
+    response = login(untrusted, ds, headers={"x-forwarded-for": "198.51.100.7", "x-forwarded-proto": "https"})
     assert "secure" not in response.headers["set-cookie"].lower()
     conn = ds.get_db()
     assert conn.execute("SELECT ip_address FROM audit_log WHERE action='auth.login' ORDER BY id DESC").fetchone()[0] == "198.51.100.9"
     conn.close()
-    assert client.get("/logout", follow_redirects=False).status_code == 303
+    assert client.post("/logout", headers=csrf_headers(client, ds), follow_redirects=False).status_code == 303
 
 
 def test_release_upload_duplicate_preserves_original(ds):
     client = TestClient(ds.app)
-    client.post("/login", data={"username": "testadmin", "password": "synthetic-password-123"})
-    for payload in (b"first synthetic package", b"duplicate package"):
+    login(client, ds)
+    packages = []
+    for marker in (b"first synthetic package", b"duplicate package"):
+        stream = BytesIO()
+        with __import__("zipfile").ZipFile(stream, "w") as archive:
+            archive.writestr("marker.txt", marker)
+        packages.append(stream.getvalue())
+    for payload in packages:
         response = client.post("/releases", data={"version": "test-1"},
                                files={"package": ("release.zip", payload, "application/zip")},
+                               headers=csrf_headers(client, ds),
                                follow_redirects=False)
         assert response.status_code == 303
     files = list(ds.RELEASE_DIR.glob("*.zip"))
     assert len(files) == 1
-    assert files[0].read_bytes() == b"first synthetic package"
+    assert files[0].read_bytes() == packages[0]
     (ds.UPLOAD_DIR / "sample.txt").write_text("synthetic media")
+    conn = ds.get_db()
+    owner = conn.execute("SELECT id FROM users WHERE username='testadmin'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO contents(name,filename,content_type,created_at,owner_user_id) VALUES(?,?,?,?,?)",
+        ("sample", "uploads/sample.txt", "image", 1, owner),
+    )
+    conn.commit(); conn.close()
     assert client.get("/media/uploads/sample.txt").text == "synthetic media"
 
 
@@ -213,7 +242,11 @@ def test_backup_failure_not_promoted_and_retention_scoped(ops, synthetic, monkey
 
 def test_environment_validation(ops, tmp_path):
     example = ROOT / "deploy/linux/digital-signage.env.example"
-    assert ops.validate_env(example)["DS_COOKIE_SECURE"] == "0"
+    values = ops.validate_env(example)
+    assert values["DS_COOKIE_SECURE"] == "0"
+    assert values["DS_REQUIRE_DEVICE_TOKEN"] == "1"
+    assert values["DS_CLEANUP_DRY_RUN"] == "1"
+    assert values["DS_CLEANUP_DELETE_ARCHIVED"] == "0"
     bad = tmp_path / "bad.env"
     bad.write_text("DS_COOKIE_SECURE=0\n", newline="\n")
     with pytest.raises(ValueError):
@@ -254,7 +287,19 @@ def test_service_and_scripts_contract():
         assert b"\r" not in script.read_bytes()
     nginx = (ROOT / "deploy/linux/nginx-digital-signage.conf.example").read_text()
     assert "proxy_set_header X-Forwarded-For $remote_addr;" in nginx
+    assert "client_max_body_size 2g;" in nginx
     assert "listen 443" not in nginx
+    backup_service = (ROOT / "deploy/linux/digital-signage-backup.service").read_text()
+    backup_timer = (ROOT / "deploy/linux/digital-signage-backup.timer").read_text()
+    assert "Type=oneshot" in backup_service and "backup-server.sh --keep 14" in backup_service
+    assert "Persistent=true" in backup_timer and "RandomizedDelaySec=" in backup_timer
+    retention_service = (ROOT / "deploy/linux/digital-signage-retention.service").read_text()
+    retention_timer = (ROOT / "deploy/linux/digital-signage-retention.timer").read_text()
+    assert "retention_server.py" in retention_service and "ReadWritePaths=/var/lib/digital-signage" in retention_service
+    assert "Persistent=true" in retention_timer and "RandomizedDelaySec=" in retention_timer
+    all_linux = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "deploy/linux").iterdir() if path.is_file())
+    assert "libreoffice" not in all_linux.lower()
+    assert "fitz" not in all_linux
 
 
 def test_preflight_reports_blockers_without_starting_app(ops, synthetic, monkeypatch, capsys):

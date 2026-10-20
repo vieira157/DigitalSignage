@@ -1,19 +1,477 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Login - Digital Signage</title>
-<style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#0f172a,#1e3a8a);font-family:Inter,Segoe UI,Arial,sans-serif;color:#172033}.card{width:min(420px,calc(100vw - 28px));background:#fff;border-radius:18px;padding:34px;box-shadow:0 24px 80px rgba(0,0,0,.28)}h1{margin:0;font-size:27px;letter-spacing:-.6px}.sub{margin:7px 0 24px;color:#667085;font-size:13px;line-height:1.5}.field{display:grid;gap:7px;margin-top:14px}label{font-size:12px;font-weight:800;letter-spacing:.35px;text-transform:uppercase;color:#667085}input{font:inherit;border:1px solid #d6dce5;border-radius:10px;padding:12px}input:focus{outline:3px solid #bfdbfe;border-color:#2563eb}.btn{width:100%;margin-top:20px;border:0;border-radius:10px;background:#2563eb;color:#fff;padding:13px;font-weight:800;cursor:pointer}.error{border:1px solid #fecaca;background:#fff1f0;color:#991b1b;border-radius:10px;padding:11px 13px;font-size:12px;margin-bottom:14px}.foot{margin-top:20px;color:#98a2b3;font-size:12px;text-align:center}.brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}.logo{width:42px;height:42px;border-radius:12px;background:#eff6ff;display:grid;place-items:center;color:#2563eb;font-weight:900}
-</style>
-</head><body>
-<form class="card" method="post" action="/login">
-  <div class="brand"><div class="logo">DS</div><div><h1>Digital Signage</h1><div class="sub">Console corporativo Arvedi</div></div></div>
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
-  <input type="hidden" name="next" value="{{ next }}">
-  <div class="field"><label for="login-username">Usuário</label><input id="login-username" name="username" autocomplete="username" autofocus required></div>
-  <div class="field"><label for="login-password">Senha</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
-  <button class="btn" type="submit">Entrar</button>
-  <div class="foot">Servidor {{ app_version }}</div>
-</form>
-</body></html>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Entrar | Digital Signage</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', path='images/arvedi-logo.png') }}">
+  <style>
+    /* Login institucional: estilos locais, sem dependências externas. */
+    :root {
+      --ds-brand: #2563eb;
+      --ds-brand-hover: #1d4ed8;
+      --ds-brand-focus: #93c5fd;
+      --ds-ink: #101828;
+      --ds-muted: #475467;
+      --ds-soft: #667085;
+      --ds-line: #d0d5dd;
+      --ds-surface: #ffffff;
+      --ds-canvas: #f8fafc;
+      --ds-danger: #b42318;
+      --ds-danger-bg: #fef3f2;
+      --ds-success: #027a48;
+      --ds-success-bg: #ecfdf3;
+      --ds-radius-sm: 8px;
+      --ds-radius-md: 12px;
+      --ds-radius-lg: 16px;
+      --ds-shadow: 0 20px 60px rgba(16, 24, 40, .07);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { min-height: 100%; }
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      background: var(--ds-canvas);
+      color: var(--ds-ink);
+      font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    :focus-visible { outline: 3px solid var(--ds-brand-focus); outline-offset: 3px; }
+
+    .auth-layout {
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+    }
+
+    /* Identidade institucional — não contém informações dinâmicas inventadas. */
+    .institutional {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      background: radial-gradient(circle at 85% 14%, #1f4a9a 0%, transparent 37%),
+                  linear-gradient(145deg, #111827 0%, #10254c 59%, #142f65 100%);
+      color: #fff;
+      padding: clamp(32px, 5vw, 80px);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 48px;
+    }
+    .institutional::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      width: 600px;
+      height: 600px;
+      right: -285px;
+      bottom: -345px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 50%;
+      box-shadow: 0 0 0 95px rgba(255,255,255,.025),
+                  0 0 0 194px rgba(255,255,255,.018);
+      pointer-events: none;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand { flex-direction: column; align-items: flex-start; gap: 18px; }
+    .brand-logo { background: #fff; border-radius: 8px; padding: 12px 16px; max-width: 100%; }
+    .brand-logo img { display: block; width: 280px; max-width: 100%; height: auto; }
+    .mobile-brand .brand-logo { padding: 0; }
+    .mobile-brand .brand-logo img { width: 250px; }
+    .brand-name { display: block; font-size: 17px; font-weight: 750; letter-spacing: -.45px; }
+    .brand-caption { display: block; margin-top: 2px; font-size: 12px; color: #bdcbe3; font-weight: 500; }
+    .institutional-content { max-width: 550px; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 20px;
+      color: #c2d7fc;
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .eyebrow-dot { width: 7px; height: 7px; border-radius: 50%; background: #93c5fd; }
+    .institutional h2 {
+      margin: 0;
+      max-width: 520px;
+      font-size: clamp(38px, 4.3vw, 62px);
+      line-height: 1.08;
+      letter-spacing: -.05em;
+      font-weight: 770;
+    }
+    .institutional h2 span { color: #93c5fd; }
+    .institutional-lead {
+      margin: 22px 0 30px;
+      max-width: 460px;
+      color: #c6d2e5;
+      font-size: 16px;
+      line-height: 1.75;
+    }
+    .feature-card {
+      max-width: 450px;
+      padding: 20px;
+      border: 1px solid rgba(255,255,255,.17);
+      border-radius: 16px;
+      background: rgba(255,255,255,.075);
+      box-shadow: 0 18px 55px rgba(2,6,23,.12);
+      backdrop-filter: blur(8px);
+    }
+    .feature-title { margin: 0 0 15px; color: #e7efff; font-size: 12px; font-weight: 750; letter-spacing: .02em; }
+    .feature-list { display: grid; gap: 10px; }
+    .feature-item { display: flex; align-items: center; gap: 12px; color: #e7eefb; font-size: 13px; font-weight: 550; }
+    .feature-icon {
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(255,255,255,.11);
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      background: rgba(255,255,255,.11);
+      color: #e0ebff;
+      flex-shrink: 0;
+    }
+    .feature-icon svg { width: 17px; height: 17px; }
+    .institutional-foot { color: #a8b8d1; font-size: 12px; line-height: 1.6; }
+
+    /* Painel de autenticação — não depende do shell administrativo. */
+    .auth-panel {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 48px clamp(28px, 5.2vw, 92px);
+      background: var(--ds-surface);
+    }
+    .auth-content { width: 100%; max-width: 420px; }
+    .mobile-brand { display: none; margin-bottom: 48px; color: var(--ds-ink); }
+    .mobile-brand .brand-caption { color: var(--ds-muted); }
+    .auth-heading h1 {
+      font-size: clamp(28px, 3vw, 36px);
+      line-height: 1.17;
+      letter-spacing: -.045em;
+      font-weight: 760;
+      margin: 0;
+    }
+    .auth-heading p {
+      color: var(--ds-muted);
+      font-size: 15px;
+      line-height: 1.7;
+      margin: 12px 0 30px;
+    }
+    .feedback {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 13px 14px;
+      margin-bottom: 22px;
+      border: 1px solid #fecdca;
+      border-radius: var(--ds-radius-md);
+      color: #912018;
+      background: var(--ds-danger-bg);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .feedback.feedback-info {
+      border-color: #abefc6;
+      background: var(--ds-success-bg);
+      color: var(--ds-success);
+    }
+    .feedback-icon { flex-shrink: 0; width: 19px; height: 19px; margin-top: 1px; }
+    .form-field { margin-top: 21px; }
+    .form-field label {
+      display: block;
+      margin-bottom: 9px;
+      color: #344054;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .input-shell { position: relative; }
+    .input {
+      display: block;
+      width: 100%;
+      height: 48px;
+      padding: 0 15px;
+      border-radius: var(--ds-radius-md);
+      border: 1px solid var(--ds-line);
+      background: #fff;
+      color: var(--ds-ink);
+      font-size: 15px;
+      line-height: normal;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .input::placeholder { color: #667085; }
+    .input:hover { border-color: #667085; }
+    .input:focus { outline: none; border-color: var(--ds-brand); box-shadow: 0 0 0 4px rgba(147,197,253,.30); }
+    .input[aria-invalid="true"] { border-color: var(--ds-danger); }
+    .input-password { padding-right: 53px; }
+    .show-password {
+      position: absolute;
+      inset-block: 4px;
+      right: 5px;
+      width: 42px;
+      min-height: 40px;
+      display: grid;
+      place-items: center;
+      border: none;
+      border-radius: var(--ds-radius-sm);
+      background: transparent;
+      color: #667085;
+    }
+    .show-password:hover { background: #f2f4f7; color: #344054; }
+    .show-password svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .show-password .eye-off { display: none; }
+    .show-password[aria-pressed="true"] .eye { display: none; }
+    .show-password[aria-pressed="true"] .eye-off { display: block; }
+    .submit {
+      margin-top: 28px;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 48px;
+      padding: 11px 17px;
+      border: 1px solid transparent;
+      border-radius: var(--ds-radius-md);
+      background: var(--ds-brand);
+      color: white;
+      font-size: 15px;
+      font-weight: 700;
+      transition: background .15s ease, transform .15s ease;
+    }
+    .submit:hover { background: var(--ds-brand-hover); }
+    .submit:active { transform: translateY(1px); }
+    .submit:disabled { cursor: wait; opacity: .80; }
+    .submit-spinner {
+      display: none;
+      width: 17px;
+      height: 17px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .65s linear infinite;
+    }
+    .submit[data-loading="true"] .submit-spinner { display: inline-block; }
+    .submit[data-loading="true"] .submit-caption { display: none; }
+    .submit[data-loading="false"] .submit-loading-caption { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .auth-footer {
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid #eaecf0;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px 16px;
+      font-size: 12px;
+      color: var(--ds-soft);
+    }
+    .auth-footer strong { font-weight: 600; color: #475467; }
+    .development-credit { flex-basis: 100%; line-height: 1.8; }
+    .development-credit a { color: #475467; text-underline-offset: 3px; }
+    .development-credit a:hover { color: #1d4ed8; }
+    .feedback span, .auth-footer { overflow-wrap: anywhere; }
+    .legal-note { margin-top: 18px; color: #667085; font-size: 12px; line-height: 1.6; }
+
+    @media (max-width: 980px) {
+      .auth-layout { grid-template-columns: 1fr; }
+      .institutional { display: none; }
+      .auth-panel { padding: 40px 28px; }
+      .mobile-brand { display: inline-flex; }
+    }
+    @media (max-width: 520px) {
+      body { background: var(--ds-surface); }
+      .auth-panel { justify-content: flex-start; padding: 32px 22px 40px; }
+      .mobile-brand { margin-bottom: 32px; }
+      .auth-heading h1 { font-size: 29px; }
+      .auth-heading p { margin-bottom: 24px; }
+      .form-field { margin-top: 18px; }
+      .auth-footer { margin-top: 28px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-layout">
+    <aside class="institutional" aria-label="Sobre o Digital Signage">
+      <div class="brand" aria-label="Digital Signage — console corporativo Arvedi">
+        <span class="brand-logo"><img src="{{ url_for('static', path='images/arvedi-logo.png') }}" width="350" height="41" alt="Arvedi"></span>
+        <span>
+          <span class="brand-name">Digital Signage</span>
+          <span class="brand-caption">Console corporativo Arvedi</span>
+        </span>
+      </div>
+
+      <div class="institutional-content">
+        <div class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Gerenciamento de sinalização digital</div>
+        <h2>Conteúdo certo.<br><span>Na tela certa.</span></h2>
+        <p class="institutional-lead">Organize mídias, publique playlists e acompanhe seus dispositivos em um único ambiente.</p>
+        <div class="feature-card" aria-label="Áreas principais do console">
+          <p class="feature-title">SEU ESPAÇO DE TRABALHO</p>
+          <div class="feature-list">
+            <div class="feature-item">
+              <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></span>
+              Biblioteca de mídia
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M14 4v16M3 9h5M3 15h5"/></svg></span>
+              Playlists e publicações
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+              TVs e Players
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg></span>
+              Agendamentos
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="institutional-foot">Acesso restrito a usuários autorizados.</div>
+    </aside>
+
+    <main class="auth-panel" id="conteudo-principal">
+      <div class="auth-content">
+        <div class="brand mobile-brand" aria-label="Digital Signage — console corporativo Arvedi">
+          <span class="brand-logo"><img src="{{ url_for('static', path='images/arvedi-logo.png') }}" width="350" height="41" alt="Arvedi"></span>
+          <span>
+            <span class="brand-name">Digital Signage</span>
+            <span class="brand-caption">Console corporativo Arvedi</span>
+          </span>
+        </div>
+
+        <header class="auth-heading">
+          <h1>Bem-vindo de volta</h1>
+          <p>Acesse o console com suas credenciais corporativas.</p>
+        </header>
+
+        {% if error %}
+          {% if error == "Sessão encerrada." %}
+            <div class="feedback feedback-info" id="auth-feedback" role="status">
+              <svg class="feedback-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span>{{ error }}</span>
+            </div>
+          {% else %}
+            <div class="feedback" id="auth-feedback" role="alert">
+              <svg class="feedback-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+              <span>{{ error }}</span>
+            </div>
+          {% endif %}
+        {% endif %}
+
+        <form id="login-form" method="post" action="/login" autocomplete="on">
+          <input type="hidden" name="csrf_token" value="{{ login_csrf_token }}">
+          <input type="hidden" name="next" value="{{ next | e }}">
+          <div class="form-field">
+            <label for="username">Usuário</label>
+            <div class="input-shell">
+              <input
+                class="input"
+                id="username"
+                name="username"
+                type="text"
+                placeholder="Seu usuário"
+                autocomplete="username"
+                spellcheck="false"
+                autocapitalize="none"
+                {% if error and error != "Sessão encerrada." %}aria-invalid="true" aria-describedby="auth-feedback"{% endif %}
+                required
+                autofocus>
+            </div>
+          </div>
+          <div class="form-field">
+            <label for="password">Senha</label>
+            <div class="input-shell">
+              <input
+                class="input input-password"
+                id="password"
+                name="password"
+                type="password"
+                placeholder="Digite sua senha"
+                autocomplete="current-password"
+                {% if error and error != "Sessão encerrada." %}aria-invalid="true" aria-describedby="auth-feedback"{% endif %}
+                required>
+              <button
+                type="button"
+                id="password-toggle"
+                class="show-password"
+                aria-label="Mostrar senha"
+                aria-pressed="false"
+                aria-controls="password"
+                title="Mostrar senha">
+                <svg class="eye" aria-hidden="true" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="eye-off" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3l18 18M9.8 5.2A11.8 11.8 0 0 1 12 5c6.4 0 10 7 10 7a15.7 15.7 0 0 1-3.1 3.9M6.2 6.3C3.6 8.2 2 12 2 12s3.6 7 10 7a10 10 0 0 0 4.2-.9M10 10a3 3 0 0 0 4 4"/></svg>
+              </button>
+            </div>
+          </div>
+          <button class="submit" type="submit" id="submit-button" data-loading="false">
+            <span class="submit-spinner" aria-hidden="true"></span>
+            <span class="submit-caption">Entrar</span>
+            <span class="submit-loading-caption">Entrando...</span>
+          </button>
+        </form>
+
+        <footer class="auth-footer">
+          <span>Digital Signage</span>
+          <span>Servidor <strong>{{ app_version }}</strong></span>
+          <span class="development-credit">Desenvolvido por <a href="https://www.linkedin.com/in/victor-vieira67/" target="_blank" rel="noopener noreferrer" aria-label="Victor Vieira no LinkedIn (abre em nova aba)">Victor Vieira</a></span>
+        </footer>
+        <p class="legal-note">Este ambiente é destinado exclusivamente a usuários autorizados.</p>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+      const password = document.getElementById("password");
+      const toggle = document.getElementById("password-toggle");
+      const form = document.getElementById("login-form");
+      const submit = document.getElementById("submit-button");
+
+      toggle.addEventListener("click", function () {
+        const visible = password.type === "password";
+        password.type = visible ? "text" : "password";
+        toggle.setAttribute("aria-pressed", String(visible));
+        toggle.setAttribute("aria-label", visible ? "Ocultar senha" : "Mostrar senha");
+        toggle.title = visible ? "Ocultar senha" : "Mostrar senha";
+        password.focus({ preventScroll: true });
+      });
+
+      form.addEventListener("submit", function (event) {
+        if (submit.disabled) { event.preventDefault(); return; }
+        // O navegador já validou os campos obrigatórios neste ponto.
+        submit.dataset.loading = "true";
+        submit.disabled = true;
+        form.setAttribute("aria-busy", "true");
+      });
+
+      // Restaura o estado se o navegador reutilizar a página pelo histórico.
+      window.addEventListener("pageshow", function () {
+        submit.dataset.loading = "false";
+        submit.disabled = false;
+        form.removeAttribute("aria-busy");
+      });
+    }());
+  </script>
+</body>
+</html>

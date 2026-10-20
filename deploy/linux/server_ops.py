@@ -34,6 +34,7 @@ EXPECTED = {
     "DS_DB_FILE": (DATA / "digital_signage.db").as_posix(),
     "DS_MEDIA_DIR": (DATA / "media").as_posix(),
     "DS_RELEASE_DIR": (DATA / "releases").as_posix(),
+    "DS_UPLOAD_TEMP_DIR": (DATA / "upload-tmp").as_posix(),
 }
 
 
@@ -81,6 +82,16 @@ def validate_env(path=ENV):
             raise ValueError(f"{key} ausente ou abaixo do mínimo")
     if values.get("DS_REQUIRE_DEVICE_TOKEN") not in {"0", "1"}:
         raise ValueError("DS_REQUIRE_DEVICE_TOKEN deve ser 0 ou 1")
+    for key in ("DS_ALLOW_LEGACY_PUBLIC_MEDIA", "DS_CLEANUP_DRY_RUN", "DS_CLEANUP_DELETE_ARCHIVED"):
+        if values.get(key) not in {"0", "1"}:
+            raise ValueError(f"{key} deve ser 0 ou 1")
+    for key in (
+        "DS_MAX_IMAGE_MB", "DS_MAX_VIDEO_MB", "DS_MAX_RELEASE_MB",
+        "DS_MAX_FILES_PER_UPLOAD", "DS_MAX_REQUEST_MB",
+        "DS_RETENTION_TEMP_DAYS", "DS_RETENTION_ARCHIVED_DAYS",
+    ):
+        if int(values.get(key, "0")) < 1:
+            raise ValueError(f"{key} deve ser >= 1")
     if values.get("DS_INITIAL_CREDENTIALS_FILE", (DATA / "first_admin_credentials.txt").as_posix()) != (DATA / "first_admin_credentials.txt").as_posix():
         raise ValueError("Caminho de credencial inicial não suportado pelo runbook")
     password = values.get("DS_INITIAL_ADMIN_PASSWORD", "")
@@ -338,9 +349,9 @@ def preflight(mode):
         "/usr/bin/test", "-r", APP / "app.py"))
     check("Python >= 3.11", lambda: run(VENV / "bin/python", "-c", "import sys; assert sys.version_info >= (3,11)"))
     check("dependências Python", lambda: run(VENV / "bin/python", "-c",
-        "import fastapi,uvicorn,jinja2,python_multipart,fitz; from zoneinfo import ZoneInfo; ZoneInfo('America/Sao_Paulo')"))
+        "import fastapi,uvicorn,jinja2,python_multipart; from zoneinfo import ZoneInfo; ZoneInfo('America/Sao_Paulo')"))
     check("pip check", lambda: run(VENV / "bin/python", "-m", "pip", "check"))
-    for exe in ("ffprobe", "ffmpeg", "sqlite3", "git", "curl", "libreoffice"):
+    for exe in ("ffprobe", "ffmpeg", "sqlite3", "git", "curl"):
         check(exe, lambda e=exe: require(shutil.which(e) is not None))
     check("espaço livre >= 2 GiB", lambda: require(shutil.disk_usage(DATA).free >= 2 * 1024**3))
     check("DNS", lambda: socket.getaddrinfo("signage.amb.local", 80))
@@ -375,7 +386,7 @@ def install():
         raise ValueError("Distribuição suportada: Debian ou Ubuntu com Python >= 3.11")
     if sys.version_info < (3, 11):
         raise ValueError("Python >= 3.11 necessário")
-    for name in ("python3", "git", "curl", "ffprobe", "ffmpeg", "sqlite3", "libreoffice"):
+    for name in ("python3", "git", "curl", "ffprobe", "ffmpeg", "sqlite3"):
         if not shutil.which(name):
             raise ValueError("Dependência ausente; instalar conforme LINUX_SERVER.md: " + name)
     if not (APP / "app.py").is_file() or not (APP / "requirements.txt").is_file():
@@ -396,7 +407,7 @@ def install():
     except KeyError:
         run("useradd", "--system", "--gid", "digital-signage", "--home-dir", DATA,
             "--no-create-home", "--shell", "/usr/sbin/nologin", "digital-signage")
-    for path in (APP.parent, ENV.parent, DATA, DATA / "media", DATA / "releases", BACKUPS):
+    for path in (APP.parent, ENV.parent, DATA, DATA / "media", DATA / "releases", DATA / "upload-tmp", BACKUPS):
         if path.is_symlink():
             raise ValueError("Diretório simbólico recusado")
         path.mkdir(parents=True, exist_ok=True)
@@ -408,7 +419,7 @@ def install():
     os.chown(BACKUPS, 0, 0)
     # Only adjust top-level data directories; never replace existing data.
     account = pwd.getpwnam("digital-signage")
-    for path in (DATA, DATA / "media", DATA / "releases"):
+    for path in (DATA, DATA / "media", DATA / "releases", DATA / "upload-tmp"):
         os.chown(path, account.pw_uid, grp.getgrnam("digital-signage").gr_gid)
         os.chmod(path, 0o700)
     if not (VENV / "bin/python").exists():
@@ -418,9 +429,17 @@ def install():
     run(VENV / "bin/python", "-m", "pip", "check")
     runtime_readable(APP)
     runtime_readable(VENV)
-    target = Path("/etc/systemd/system") / SERVICE
-    shutil.copyfile(APP / "deploy/linux/digital-signage.service", target)
-    os.chmod(target, 0o644)
+    unit_names = (
+        SERVICE,
+        "digital-signage-backup.service",
+        "digital-signage-backup.timer",
+        "digital-signage-retention.service",
+        "digital-signage-retention.timer",
+    )
+    for unit_name in unit_names:
+        target = Path("/etc/systemd/system") / unit_name
+        shutil.copyfile(APP / "deploy/linux" / unit_name, target)
+        os.chmod(target, 0o644)
     run("systemctl", "daemon-reload")
     print("Instalação preparada. Serviço NÃO iniciado nem habilitado.")
     print("Crie server.env root:root 0600; execute preflight offline e siga o runbook.")
@@ -597,7 +616,10 @@ def static_checks(app, python):
         run("bash", "-n", path)
         if shutil.which("shellcheck"):
             run("shellcheck", path)
-    run("systemd-analyze", "verify", app / "deploy/linux/digital-signage.service")
+    for unit in (app / "deploy/linux").glob("digital-signage*.service"):
+        run("systemd-analyze", "verify", unit)
+    for unit in (app / "deploy/linux").glob("digital-signage*.timer"):
+        run("systemd-analyze", "verify", unit)
     run("git", "-C", app, "diff", "--check")
 
 

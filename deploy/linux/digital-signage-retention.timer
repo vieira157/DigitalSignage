@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Digital Signage retention check
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=digital-signage-retention.service
+
+[Install]
+WantedBy=timers.target

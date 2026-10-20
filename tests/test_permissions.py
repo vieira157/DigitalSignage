@@ -17,8 +17,26 @@ os.environ["DS_INITIAL_ADMIN_PASSWORD"] = "temporary-test-password"
 os.environ["DS_INITIAL_CREDENTIALS_FILE"] = str(ROOT / "first_admin_credentials.txt")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as RawTestClient
 import app as ds
+
+
+class TestClient(RawTestClient):
+    def request(self, method, url, **kwargs):
+        method = str(method).upper()
+        if method == "POST" and url == "/login":
+            super().request("GET", "/login")
+            data = dict(kwargs.get("data") or {})
+            data["csrf_token"] = self.cookies.get(ds.LOGIN_CSRF_COOKIE_NAME)
+            kwargs["data"] = data
+        elif method in {"POST", "PUT", "PATCH", "DELETE"}:
+            session = self.cookies.get(ds.SESSION_COOKIE_NAME)
+            if session:
+                headers = dict(kwargs.get("headers") or {})
+                headers.setdefault("X-CSRF-Token", ds.csrf_token_for_session(session))
+                kwargs["headers"] = headers
+        return super().request(method, url, **kwargs)
+
 
 C = TestClient(ds.app)
 
@@ -102,6 +120,52 @@ def test_editor_cannot_mutate_foreign_or_shared_playlist():
     assert c.post('/players/TV-A/command',data={'command':'restart_browser'},follow_redirects=False).status_code==403
 
 
+def test_only_admin_can_delete_tv_and_related_operational_data():
+    conn = ds.get_db()
+    conn.execute("INSERT INTO tvs(tv_id,name,location) VALUES('TV-DELETE','TV temporária','Teste')")
+    conn.execute("INSERT INTO tv_playlists(tv_id,playlist_id) VALUES('TV-DELETE',?)", (PID_A,))
+    conn.execute("INSERT INTO schedules(tv_id,playlist_id,day_of_week,start_time,end_time,enabled,created_at) VALUES('TV-DELETE',?,1,'08:00','09:00',1,?)", (PID_A,time.time()))
+    conn.execute("INSERT INTO tv_runtime_status(tv_id,updated_at,payload_json) VALUES('TV-DELETE',?, '{}')", (time.time(),))
+    conn.execute("INSERT INTO tv_event_log(tv_id,created_at,event_type,severity,title,detail) VALUES('TV-DELETE',?,'health_ok','info','Teste','Teste')", (time.time(),))
+    conn.execute("INSERT INTO tv_monitor_state(tv_id,health,updated_at) VALUES('TV-DELETE','ok',?)", (time.time(),))
+    conn.execute("INSERT INTO tv_maintenance(tv_id,enabled,updated_at) VALUES('TV-DELETE',0,?)", (time.time(),))
+    conn.execute("INSERT INTO stability_samples(tv_id,bucket,observed_at) VALUES('TV-DELETE',1,?)", (time.time(),))
+    conn.execute("INSERT INTO stability_events(tv_id,event_uid,occurred_at,received_at,event_type,severity) VALUES('TV-DELETE',?,?,?,'monitor_started','info')", ('a'*32,time.time(),time.time()))
+    command_id = conn.execute("INSERT INTO player_commands(tv_id,command,status,created_at) VALUES('TV-DELETE','sync_now','pending',?)", (time.time(),)).lastrowid
+    release_id = conn.execute("INSERT INTO player_releases(version,filename,sha256,size_bytes,status,created_at) VALUES('delete-test','delete.zip','00',1,'draft',?)", (time.time(),)).lastrowid
+    conn.execute("INSERT INTO player_update_jobs(release_id,tv_id,command_id,status,created_at) VALUES(?, 'TV-DELETE',?,'queued',?)", (release_id,command_id,time.time()))
+    viewer_id = conn.execute("SELECT id FROM users WHERE username='rbac_viewer'").fetchone()[0]
+    conn.execute("INSERT INTO user_tv_permissions(user_id,tv_id,granted_at) VALUES(?, 'TV-DELETE',?)", (viewer_id,time.time()))
+    conn.commit(); conn.close()
+
+    operator = login('rbac_operator')
+    assert operator.post('/players/TV-DELETE/delete',data={'confirm_tv_id':'TV-DELETE'},follow_redirects=False).status_code == 403
+
+    admin = login('rbac_admin')
+    assert admin.post('/players/TV-DELETE/delete',data={'confirm_tv_id':'incorreto'},follow_redirects=False).status_code == 400
+    detail = admin.get('/players/TV-DELETE')
+    assert detail.status_code == 200
+    assert 'action="/players/TV-DELETE/delete"' in detail.text
+    assert 'Excluir tela definitivamente' in detail.text
+    operator_detail = operator.get('/players/TV-A')
+    assert operator_detail.status_code == 200
+    assert 'Excluir tela definitivamente' not in operator_detail.text
+    response = admin.post('/players/TV-DELETE/delete',data={'confirm_tv_id':'TV-DELETE'},follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'].startswith('/players?')
+
+    conn = ds.get_db()
+    assert conn.execute("SELECT 1 FROM tvs WHERE tv_id='TV-DELETE'").fetchone() is None
+    for table in ('player_update_jobs','player_commands','schedules','tv_playlists','tv_contents','user_tv_permissions','tv_runtime_status','tv_event_log','tv_monitor_state','tv_maintenance','stability_events','stability_samples'):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE tv_id='TV-DELETE'").fetchone()[0] == 0
+    audit = conn.execute("SELECT action,target_id FROM audit_log WHERE action='tv.delete' ORDER BY id DESC LIMIT 1").fetchone()
+    assert conn.execute("SELECT 1 FROM playlists WHERE id=?", (PID_A,)).fetchone() is not None
+    assert conn.execute("SELECT 1 FROM player_releases WHERE id=?", (release_id,)).fetchone() is not None
+    conn.close()
+    assert audit and audit['target_id'] == 'TV-DELETE'
+    assert admin.get('/players/TV-DELETE').status_code == 404
+
+
 def test_operator_may_operate_own_tv_without_admin_functions():
     c=login('rbac_operator')
     assert c.post('/players/TV-A/command',data={'command':'sync_now'},follow_redirects=False).status_code==303
@@ -142,8 +206,9 @@ def test_admin_has_full_visibility_and_user_tv_assignment_is_editable():
 
 
 def test_raspberry_endpoints_do_not_demand_dashboard_login():
-    # Kiosk legado, token do dispositivo continua autenticando APIs do player.
-    assert C.get('/player/TV-A').status_code == 200
+    # Player Web exige sessão; o Raspberry usa somente APIs com token.
+    assert C.get('/player/TV-A', follow_redirects=False).status_code == 303
+    assert login('rbac_viewer').get('/player/TV-A').status_code == 200
     # TVs ainda não provisionadas mantêm a compatibilidade legada (será desativada após migração).
     assert C.get('/api/player/TV-A').status_code == 200
     conn=ds.get_db()

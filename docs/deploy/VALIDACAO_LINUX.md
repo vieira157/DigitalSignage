@@ -25,6 +25,13 @@ injeção de falhas desta correção passaram; a execução real permanece reser
   duplicação de versão.
 - Unidade systemd com um worker, loopback, proxy local confiável e journal.
 - Referência Nginx HTTP, headers, buffering, limite e timeouts de upload.
+- Mídia protegida por sessão ou token do Dispositivo, com escopo por Tela,
+  Range/206 e compatibilidade do cache atual.
+- CSRF ligado à sessão em formulários e AJAX administrativos; login usa token
+  pré-sessão e APIs de Dispositivo não dependem de CSRF.
+- Uploads com limites configuráveis, temporário externo, MIME, assinatura e
+  `ffprobe`; PDF/PPT/PPTX rejeitados e registros históricos preservados.
+- Retenção conservadora em dry-run e timers systemd para retenção e backup.
 - Instalador, preflight offline/online, backup, restore e update/rollback.
   Helpers Python compartilham validação e são testáveis com dados sintéticos.
 - Dependências diretas e transitivas delimitadas; testes separados.
@@ -34,27 +41,29 @@ injeção de falhas desta correção passaram; a execução real permanece reser
 
 | Verificação | Resultado |
 |---|---|
-| Testes Python de implantação, saúde/versão do Player e permissões | **58 passaram** |
-| Reexecução da suíte de implantação após ajuste final do helper | **19 passaram** |
+| Suíte Python completa | **114 passaram** após corrigir a leitura UTF-8 do teste estático |
+| Segurança, permissões, retenção e Linux direcionados | **44 passaram** |
 | AST dos Python alterados e testes | Passou, sem importar a aplicação para parsing |
 | Parsing Jinja dos templates | **31 templates passaram** |
 | `bash -n` | **5 scripts passaram**, Git Bash |
 | JavaScript existente de testes de Players | Sintaxe e execução passaram |
 | `pip check` do ambiente local | Sem dependências quebradas |
-| systemd | Estrutura e argumentos verificados; não executado systemd-analyze |
+| systemd | Serviço principal e unidades backup/retenção verificados estaticamente; não executado systemd-analyze |
 | Nginx | Estrutura/requisitos verificados; não executado nginx -t |
 | Exemplos env | Validados por testes, sem segredo real |
 | LF em deploy/linux | Passou |
 | Busca de endereços privados nos novos artefatos de implantação | Nenhuma ocorrência |
-| `git diff --check` | Passou; aviso de CRLF em documentação preexistente fora deste trabalho |
+| `git diff --check` | Passou após normalização LF dos arquivos modificados |
 
 Testes cobrem: saúde normal e indisponível, ausência/corrupção de banco,
 permissão negada simulada, diretórios ausentes, credencial exclusiva, conta
-existente, cookie HTTP, proxy confiável e não confiável, IP de auditoria, logout,
-upload duplicado de release, mídia estática, backup SQLite com WAL, corrupção
+existente, cookie HTTP, proxy confiável e não confiável, IP de auditoria, logout/CSRF,
+upload duplicado de release, limites/MIME/assinaturas, rejeição de documentos,
+mídia autorizada e Range, backup SQLite com WAL, corrupção
 de backup, retenção limitada, backup incompleto, env inválido, preflight com
 bloqueadores simulados, monitor único, rollback de restore e rollback de troca
-de código/venv com operações externas substituídas.
+de código/venv com operações externas substituídas. Retenção cobre dry-run,
+exclusão explícita, referências de rascunho/publicação e caminho inseguro.
 
 A suíte usa banco/diretórios temporários definidos antes de importar app.
 Não foi executado nenhum dos scripts de instalação/backup/restore/update contra
@@ -65,14 +74,35 @@ não foi lido nem alterado.
 Os avisos Python são de descontinuação do `on_event` do FastAPI, mantido para
 evitar refatoração de ciclo de vida nesta implantação.
 
+## Dependências e vulnerabilidades
+
+Ubuntu Server 24.04 LTS fornece Python 3.12 como `python3`; os pacotes diretos
+fixados declaram suporte compatível. A execução local ocorreu em Python 3.14.7,
+por isso a instalação e a suíte ainda devem ser repetidas com Python 3.12 na VM.
+PyMuPDF foi removido e LibreOffice deixou de ser dependência do Servidor.
+
+Em 20/10/2026 foi executado, em venv temporário separado:
+
+```text
+pip-audit 2.10.1
+python -m pip_audit -r requirements.txt --progress-spinner off
+No known vulnerabilities found
+```
+
+A consulta usou a base disponível online naquele momento. O resultado não
+garante ausência futura de CVEs e deve ser repetido antes de cada implantação.
+`pip check` também passou. As fontes de compatibilidade foram o catálogo oficial
+do Ubuntu para Python 3.12 e os metadados publicados no PyPI para as versões
+fixadas.
+
 ## Pendências obrigatórias na homologação
 
 - WSL não instalado; Docker não disponível como comando; nenhum deles instalado
   por esta tarefa.
 - ShellCheck, systemd-analyze e Nginx não disponíveis para validação nativa local.
 - Instalação limpa dos wheels no Linux/arquitetura escolhida.
-- Permissões POSIX reais, isolamento systemd, parada/reinício e conversões
-  LibreOffice/ffprobe com fontes e arquivos representativos.
+- Permissões POSIX reais, isolamento systemd, parada/reinício e `ffprobe` com
+  vídeos MP4 representativos.
 - DNS corporativo e resolução `.local` no Raspberry, proxy e upload grande.
 - Backup, restore e rollback completos em VM isolada, incluindo falhas durante
   troca de diretórios e teste de recuperação com o commit correspondente.
@@ -90,6 +120,10 @@ Arquivos novos:
 ```text
 deploy/linux/digital-signage.env.example
 deploy/linux/digital-signage.service
+deploy/linux/digital-signage-backup.service
+deploy/linux/digital-signage-backup.timer
+deploy/linux/digital-signage-retention.service
+deploy/linux/digital-signage-retention.timer
 deploy/linux/nginx-digital-signage.conf.example
 deploy/linux/install-server.sh
 deploy/linux/preflight-server.sh
@@ -97,11 +131,15 @@ deploy/linux/backup-server.sh
 deploy/linux/restore-server.sh
 deploy/linux/update-server.sh
 deploy/linux/server_ops.py
+deploy/linux/retention_server.py
+docs/deploy/HARDENING.md
 docs/deploy/LINUX_SERVER.md
 docs/deploy/VALIDACAO_LINUX.md
 requirements-constraints.txt
 requirements-dev.txt
 tests/test_linux_deployment.py
+tests/test_retention.py
+tests/test_security_hardening.py
 ```
 
 Arquivos existentes ajustados:

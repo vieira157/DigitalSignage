@@ -16,15 +16,16 @@ migração, acesso à VM ou cópia de dados operacionais.
 | `/opt/digital-signage/venv` | Python Linux; após update pode apontar para venv versionado |
 | `/etc/digital-signage/server.env` | root:root 0600; diretório 0700 |
 | `/var/lib/digital-signage/digital_signage.db` | SQLite, usuário digital-signage, 0600 |
-| `/var/lib/digital-signage/media` | Uploads, renderizações e perfis temporários de conversão |
+| `/var/lib/digital-signage/media` | Mídias ativas e arquivadas |
 | `/var/lib/digital-signage/releases` | Pacotes do Player registrados pelo Servidor |
+| `/var/lib/digital-signage/upload-tmp` | Temporários promovidos somente após validação |
 | `/var/backups/digital-signage` | root:root 0700, backups com segredos |
 | `/var/log/digital-signage` | Não necessário: logs principais no journal |
 
 O serviço precisa escrever no diretório do banco, inclusive para journal/WAL, e
 nos diretórios de dados. O systemd limita escrita persistente a `/var/lib/digital-signage`;
-`PrivateTmp` permite temporários privados. `HOME` do serviço aponta para os dados,
-permitindo uso headless do LibreOffice. Código, templates e venv são somente leitura.
+`PrivateTmp` permite temporários privados. `HOME` do serviço aponta para os dados.
+Código, templates e venv são somente leitura.
 
 Servidor: FastAPI, Uvicorn, SQLite, Nginx, `stability_monitor.py`, mídia, releases e
 operações deste diretório. Raspberry Pi: `local_player.py`, Firefox,
@@ -84,11 +85,17 @@ falhas repetidas. O procedimento de atualização/restore consulta saúde local 
 | DS_SESSION_TTL_SECONDS | 43200 no exemplo |
 | DS_PASSWORD_ITERATIONS | 210000 no exemplo, preserva verificação dos hashes existentes |
 | DS_COOKIE_SECURE | 0 para HTTP interno |
-| DS_REQUIRE_DEVICE_TOKEN | 0/1; manter política existente; não ativar sem provisionar Players |
+| DS_REQUIRE_DEVICE_TOKEN | `1` após provisionar todos os Players |
+| DS_ALLOW_LEGACY_PUBLIC_MEDIA | Transição emergencial; manter `0` na homologação segura |
+| DS_UPLOAD_TEMP_DIR | Temporários; `/var/lib/digital-signage/upload-tmp` |
+| DS_MAX_IMAGE_MB / DS_MAX_VIDEO_MB | Limites por imagem/vídeo; 25/1024 MiB |
+| DS_MAX_RELEASE_MB | Limite de release ZIP; 512 MiB |
+| DS_MAX_FILES_PER_UPLOAD / DS_MAX_REQUEST_MB | Lote 20; requisição 1536 MiB |
+| DS_RETENTION_TEMP_DAYS / DS_RETENTION_ARCHIVED_DAYS | Janelas de 7/90 dias |
+| DS_CLEANUP_DRY_RUN / DS_CLEANUP_DELETE_ARCHIVED | Defaults seguros `1`/`0` |
 | DS_INITIAL_ADMIN_USER | Nome inicial, somente banco novo |
 | DS_INITIAL_ADMIN_PASSWORD | Segredo inicial, somente banco novo |
 | DS_INITIAL_CREDENTIALS_FILE | Caminho externo da credencial gerada |
-| LIBREOFFICE_PATH | Executável; exemplo `/usr/bin/libreoffice` |
 | TZ | Fuso do processo; app e monitor fixam America/Sao_Paulo |
 | PYTHONUNBUFFERED | Logs imediatos no journal |
 | PYTHONDONTWRITEBYTECODE | Evita cache Python no código |
@@ -117,12 +124,11 @@ Dependências de sistema, a instalar pela equipe em shell root autorizado:
 
 ```bash
 apt-get update
-apt-get install python3 python3-venv git curl sqlite3 ffmpeg libreoffice \
-  fonts-dejavu-core fonts-liberation
+apt-get install python3 python3-venv git curl sqlite3 ffmpeg
 ```
 
-LibreOffice e fontes são necessários para apresentações; ffprobe analisa vídeos.
-ffmpeg é provisionado junto ao ffprobe, embora a inspeção atual use ffprobe.
+`ffprobe`, fornecido pelo pacote ffmpeg, valida vídeos MP4. PDF, PPT e PPTX não
+são formatos aceitos pelo Servidor.
 Não instalar navegador ou Player no Servidor. Nginx já está provisionado.
 
 1. Disponibilizar checkout revisado em `/opt/digital-signage/app`, com origin
@@ -146,7 +152,7 @@ Preflight offline: identidade, caminhos, permissões do serviço, env, dependên
 SQLite, espaço livre mínimo de 2 GiB, DNS e porta 8000 livre. Online: exige serviço,
 saúde local e proxy, sem exigir porta livre. Nginx ativo é verificado quando instalado.
 Não importa app nem cria dados. Apenas cria/usa um lock operacional em `/run/lock`.
-Planejar espaço real adicional para backups, Nginx buffering, uploads e conversões;
+Planejar espaço real adicional para backups, buffering do Nginx e uploads;
 o mínimo de 2 GiB não dimensiona a instalação.
 
 ## Proxy e cookies
@@ -173,10 +179,23 @@ Uploads: limite Nginx 2 GiB por requisição (incluindo multipart); buffering em
 disco habilitado, timeout de corpo 300s, envio/leitura upstream 600s. Reservar
 disco para temporários do Nginx. Releases são gravadas em blocos de 1 MiB,
 limitadas a 2 GiB e usam nomes únicos: duplicação de versão não apaga o pacote
-anterior. Uploads de mídia já usam blocos. Validar vídeos e apresentações reais
+anterior. Uploads de mídia usam blocos. Validar imagens e vídeos MP4 reais
 de tamanho representativo somente durante homologação autorizada.
 
 ## Backup, retenção e restore
+
+O instalador copia as unidades de backup e retenção, mas não habilita timers.
+Após preflight e primeira execução manual bem-sucedida:
+
+```bash
+systemctl enable --now digital-signage-backup.timer
+systemctl enable --now digital-signage-retention.timer
+systemctl list-timers 'digital-signage-*'
+```
+
+O backup roda às 02:00 e a retenção às 03:30, ambos com atraso aleatório de até
+30 minutos e `Persistent=true`. Para outro horário, usar `systemctl edit` na
+unidade timer correspondente e redefinir `OnCalendar=` no override.
 
 ```bash
 bash deploy/linux/backup-server.sh --keep 14
@@ -196,6 +215,16 @@ para inspeção. Retenção só considera nomes gerados pelo helper e valida cad
 backup antes de removê-lo; nunca remove fora da raiz configurada. Hashes detectam
 corrupção, não autenticam um backup de origem não confiável. Armazenar cópia
 externa protegida conforme política corporativa; este script produz cópia local.
+Sincronizar com NAS/storage somente diretórios `backup-*` concluídos, depois do
+sucesso da unidade. Credenciais do destino ficam fora do Git e do journal. O
+backup só pode ser declarado recuperável após restore ensaiado em VM isolada.
+
+Retenção inicia com dry-run. Antes de exclusão definitiva, executar e verificar
+um backup, ensaiar restore isolado e revisar o journal de
+`digital-signage-retention.service`. Só então alterar `DS_CLEANUP_DRY_RUN=0` e,
+se a política autorizar, `DS_CLEANUP_DELETE_ARCHIVED=1`. Conteúdo referenciado
+por rascunho, publicação, histórico, agenda ou Tela permanece protegido, assim
+como releases recomendadas, estáveis ou associadas a jobs.
 
 ```bash
 bash deploy/linux/restore-server.sh --backup /var/backups/digital-signage/backup-NOME
@@ -242,7 +271,7 @@ Não rodar simultaneamente os scripts: lock exclusivo serializa operações.
 Saída identifica resultado, commits e backup; guardar registro da janela.
 Início, conclusão e falha também vão ao syslog com tag digital-signage-operations.
 Logs do app: `journalctl -u digital-signage -n 200 --no-pager`.
-Observar disco, reinícios, `/health`, falhas de conversão e eventos dos Players.
+Observar disco, reinícios, `/health`, falhas de upload e eventos dos Players.
 
 ## Migração Windows → Linux e corte
 
@@ -267,7 +296,7 @@ Observar disco, reinícios, `/health`, falhas de conversão e eventos dos Player
 4. Inventariar os caminhos efetivos do Windows e versão/commit em execução.
    Fazer backup preliminar; registrar usuários, contagens e arquivos sem expor segredos.
 5. Definir janela e impedir alterações. Parar aplicação Windows e confirmar que
-   não há processo escritor, conversão ou upload em andamento.
+   não há processo escritor ou upload em andamento.
 6. Gerar backup final com `sqlite3.Connection.backup()` e `PRAGMA integrity_check`.
    Exemplo conceitual em Python, sem importar app:
 
@@ -294,7 +323,7 @@ Observar disco, reinícios, `/health`, falhas de conversão e eventos dos Player
    Confirmar env root:root 0600 e código root sem escrita pelo serviço.
 10. Rodar preflight offline, iniciar via systemd, validar health local, Nginx,
     hostname e preflight online.
-11. Validar login/logout, uploads de imagem/vídeo/PDF/apresentação, Biblioteca,
+11. Validar login/logout, uploads de imagem/vídeo, rejeição de PDF/PPT/PPTX, Biblioteca,
     Playlists, Agendamentos (America/Sao_Paulo), Telas, Releases e Auditoria.
 12. Executar backup e ensaio de restore em VM isolada. Conferir conteúdo após restore.
 13. Em Raspberry de homologação, alterar apenas `DS_SERVER_BASE` para
@@ -320,8 +349,8 @@ Regiões relevantes em `app.py` podem ser localizadas pelas funções/constantes
 
 | Tema | Região / decisão |
 |---|---|
-| Caminhos Windows, C:, Program Files, executáveis | `find_libreoffice`: fallback Windows e descoberta PATH preservados |
-| Separadores e subprocessos | `Path`, `as_uri`, `convert_powerpoint_to_pdf`: CREATE_NO_WINDOW condicionado a nt |
+| Caminhos Windows e Linux | `Path`, dados externos e temporários em `DS_UPLOAD_TEMP_DIR` |
+| Separadores e subprocessos | `Path`; `subprocess` permanece para validação com ffprobe |
 | ffprobe/ffmpeg | `probe_media_metadata`/busca `shutil.which("ffprobe")`: ffprobe; sem execução direta de ffmpeg encontrada |
 | Escrita no código, diretórios na importação | bloco CONFIGURAÇÃO: novos defaults externos, legado Windows explícito |
 | SQLite, admin, TV padrão, migrações, releases | `init_db`, `ensure_initial_admin`, `sync_packaged_releases`; importação persiste |
@@ -334,7 +363,7 @@ Regiões relevantes em `app.py` podem ser localizadas pelas funções/constantes
 | Multiworker | inicialização, monitoramento, snapshots e sincronização duplicariam trabalho |
 
 Limites: testes Windows não comprovam ACL POSIX, systemd sandbox, pacotes Linux,
-LibreOffice/fontes Linux, resolver `.local`, Nginx ou restauração sob falha de
+resolver `.local`, Nginx ou restauração sob falha de
 energia. Backups por rename oferecem promoção de conclusão, não garantia de
 durabilidade contra perda elétrica. É necessário ensaio Linux antes de produção.
 Os exemplos antigos diretamente em `deploy/` não são a referência desta implantação;

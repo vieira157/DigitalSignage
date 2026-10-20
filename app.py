@@ -20,11 +20,10 @@ from pathlib import Path
 from urllib.parse import urlencode
 from stability_monitor import init_schema as stability_init_schema, ingest as stability_ingest, summarize as stability_summarize, window as stability_window
 
-import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 
 
 # =========================================================
@@ -45,6 +44,26 @@ MEDIA_DIR = Path(os.getenv("DS_MEDIA_DIR", str(DATA_DIR / "media"))).expanduser(
 UPLOAD_DIR = MEDIA_DIR / "uploads"
 RENDER_DIR = MEDIA_DIR / "rendered"
 RELEASE_DIR = Path(os.getenv("DS_RELEASE_DIR", str(DATA_DIR / "releases"))).expanduser().resolve()
+UPLOAD_TEMP_DIR = Path(
+    os.getenv("DS_UPLOAD_TEMP_DIR", str(DATA_DIR / "upload-tmp"))
+).expanduser().resolve()
+
+
+def positive_env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} deve ser um inteiro positivo.") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} deve ser um inteiro positivo.")
+    return value
+
+
+MAX_IMAGE_BYTES = positive_env_int("DS_MAX_IMAGE_MB", 25) * 1024 * 1024
+MAX_VIDEO_BYTES = positive_env_int("DS_MAX_VIDEO_MB", 1024) * 1024 * 1024
+MAX_RELEASE_BYTES = positive_env_int("DS_MAX_RELEASE_MB", 512) * 1024 * 1024
+MAX_FILES_PER_UPLOAD = positive_env_int("DS_MAX_FILES_PER_UPLOAD", 20)
+MAX_REQUEST_BYTES = positive_env_int("DS_MAX_REQUEST_MB", 1536) * 1024 * 1024
 
 DB_FILE = Path(os.getenv("DS_DB_FILE", str(DATA_DIR / "digital_signage.db"))).expanduser().resolve()
 DB_WAS_NEW = not DB_FILE.exists()
@@ -59,15 +78,12 @@ MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 RENDER_DIR.mkdir(exist_ok=True)
 RELEASE_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 app = FastAPI(title="Digital Signage")
-
-app.mount(
-    "/media",
-    StaticFiles(directory=MEDIA_DIR),
-    name="media"
-)
+# Only packaged public assets; never expose operational data directories.
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static"), check_dir=False), name="static")
 
 templates = Jinja2Templates(
     directory=str(BASE_DIR / "templates")
@@ -99,29 +115,6 @@ def health():
         status_code=200 if ready else 503,
         headers={"Cache-Control": "no-store"},
     )
-
-# =========================================================
-# LIBREOFFICE
-# =========================================================
-
-def find_libreoffice():
-    env_path = os.getenv("LIBREOFFICE_PATH")
-
-    candidates = [
-        env_path,
-        r"C:\Program Files\LibreOffice\program\soffice.com",
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.com",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-
-    candidates.extend([shutil.which("libreoffice"), shutil.which("soffice")])
-    for path in candidates:
-        if path and Path(path).exists():
-            return str(path)
-
-    return None
-
 
 # =========================================================
 # BANCO DE DADOS
@@ -285,6 +278,8 @@ def snapshot_to_player_playlist(
 # =========================================================
 
 SESSION_COOKIE_NAME = "ds_session"
+LOGIN_CSRF_COOKIE_NAME = "ds_login_csrf"
+CSRF_FIELD_NAME = "csrf_token"
 SESSION_TTL_SECONDS = int(os.getenv("DS_SESSION_TTL_SECONDS", "43200"))
 PASSWORD_ITERATIONS = int(os.getenv("DS_PASSWORD_ITERATIONS", "210000"))
 PBKDF_ALGORITHM = "sha256"
@@ -306,15 +301,16 @@ PROTECTED_PREFIXES = (
     "/users",
     "/audit",
     "/preview",
+    "/logout",
+    "/player",
 )
 PROTECTED_API_PREFIXES = (
     "/api/tvs/status",
     "/api/contents",
     "/api/playlist",
+    "/api/web-player",
 )
 PUBLIC_PREFIXES = (
-    "/media/",
-    "/player/",
     "/favicon.ico",
     "/bootstrap/",
     "/docs",
@@ -364,6 +360,23 @@ def verify_password(password: str, stored_hash: str | None) -> bool:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def csrf_token_for_session(session_token: str) -> str:
+    """Derive a CSRF token that rotates with the opaque login session."""
+    return hmac.new(
+        str(session_token or "").encode("utf-8"),
+        b"digital-signage:csrf:v1",
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def csrf_token(request: Request) -> str:
+    session_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    return csrf_token_for_session(session_token) if session_token else ""
+
+
+templates.env.globals["csrf_token"] = csrf_token
 
 
 def role_allows(user_role: str, minimum_role: str) -> bool:
@@ -665,6 +678,18 @@ def require_device_auth(request: Request, conn, tv_id: str):
     return True
 
 
+def authenticated_device_tv_id(request: Request, conn) -> str | None:
+    """Return the TV bound to a valid device credential, without URL secrets."""
+    received = device_token_from_request(request)
+    if not received:
+        return None
+    row = conn.execute(
+        "SELECT tv_id FROM tvs WHERE device_token_hash = ?",
+        (hash_token(received),),
+    ).fetchone()
+    return str(row["tv_id"]) if row else None
+
+
 def enqueue_player_command(conn, request: Request | None, tv_id: str, command: str, args: dict | None = None):
     args = args if isinstance(args, dict) else {}
     conn.execute(
@@ -732,6 +757,7 @@ def sync_packaged_releases(conn):
 
 
 def init_db():
+    global DB_WAS_NEW
 
     conn = get_db()
 
@@ -1108,7 +1134,7 @@ def init_db():
         ("TV01",)
     ).fetchone()
 
-    if not existing_tv:
+    if DB_WAS_NEW and not existing_tv:
         conn.execute(
             """
             INSERT INTO tvs
@@ -1274,6 +1300,7 @@ def init_db():
 
     conn.commit()
     conn.close()
+    DB_WAS_NEW = False
 
 
 init_db()
@@ -1291,7 +1318,55 @@ finally:
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     path = request.url.path
-    if path in {"/health", "/login", "/logout"} or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
+
+    async def form_csrf_token() -> str:
+        body = await request.body()
+        try:
+            form = await request.form()
+            request.state.csrf_form = dict(form)
+            supplied = str(form.get(CSRF_FIELD_NAME) or "")
+        except Exception:
+            request.state.csrf_form = {}
+            supplied = ""
+        delivered = False
+
+        async def replay_body():
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request._receive = replay_body
+        return supplied
+
+    is_upload = path in {"/admin/upload", "/releases"} or (
+        path.startswith("/api/playlist/") and path.endswith("/upload")
+    )
+    if request.method in {"POST", "PUT", "PATCH"} and is_upload:
+        raw_length = request.headers.get("Content-Length")
+        if raw_length:
+            try:
+                if int(raw_length) > MAX_REQUEST_BYTES:
+                    return JSONResponse(
+                        {"detail": "Requisição de upload excede o limite configurado."},
+                        status_code=413,
+                    )
+            except ValueError:
+                return JSONResponse({"detail": "Content-Length inválido."}, status_code=400)
+    if path == "/login" and request.method == "POST":
+        supplied = await form_csrf_token()
+        expected = request.cookies.get(LOGIN_CSRF_COOKIE_NAME, "")
+        if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+            submitted = getattr(request.state, "csrf_form", {})
+            return render_login_page(
+                request,
+                next_target=str(submitted.get("next") or "/admin"),
+                error="Sua página de login expirou. Tente novamente.",
+                status_code=403,
+            )
+
+    if path in {"/health", "/login"} or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
         return await call_next(request)
 
     def _match_prefix(prefix: str) -> bool:
@@ -1309,6 +1384,24 @@ async def security_middleware(request: Request, call_next):
                 next_url += "?" + request.url.query
             return RedirectResponse("/login?" + urlencode({"next": next_url}), status_code=303)
         request.state.user = user
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            supplied = request.headers.get("X-CSRF-Token", "")
+            if not supplied:
+                supplied = await form_csrf_token()
+            expected = csrf_token_for_session(
+                request.cookies.get(SESSION_COOKIE_NAME, "")
+            )
+            if not supplied or not hmac.compare_digest(expected, supplied):
+                if path.startswith("/api/"):
+                    return JSONResponse(
+                        {"detail": "Token CSRF ausente ou inválido."},
+                        status_code=403,
+                    )
+                return Response(
+                    "Token CSRF ausente ou inválido.",
+                    status_code=403,
+                    media_type="text/plain; charset=utf-8",
+                )
         # Bloqueio antecipado para impedir inclusive validação das telas reservadas.
         if any(_match_prefix(prefix) for prefix in ("/users", "/audit", "/releases", "/players/settings")):
             if user["role"] != "admin":
@@ -1328,13 +1421,39 @@ async def security_middleware(request: Request, call_next):
 # LOGIN / LOGOUT
 # =========================================================
 
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, next: str = "/admin", error: str = ""):
-    return templates.TemplateResponse(
+def render_login_page(
+    request: Request,
+    next_target: str = "/admin",
+    error: str = "",
+    status_code: int = 200,
+):
+    # Keep the token stable across refreshes and multiple open login tabs.
+    # A new token is created only when the browser has none (or after login).
+    login_csrf = request.cookies.get(LOGIN_CSRF_COOKIE_NAME) or secrets.token_urlsafe(32)
+    response = templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"app_version": APP_VERSION, "next": next or "/admin", "error": error},
+        context={
+            "app_version": APP_VERSION,
+            "next": next_target or "/admin",
+            "error": error,
+            "login_csrf_token": login_csrf,
+        },
+        status_code=status_code,
     )
+    response.set_cookie(
+        LOGIN_CSRF_COOKIE_NAME,
+        login_csrf,
+        httponly=True,
+        samesite="lax",
+        secure=(request.url.scheme == "https" or os.getenv("DS_COOKIE_SECURE", "0") == "1"),
+        max_age=600,
+    )
+    return response
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/admin", error: str = ""):
+    return render_login_page(request, next_target=next, error=error)
 
 
 @app.post("/login")
@@ -1369,10 +1488,11 @@ def login_submit(
         max_age=SESSION_TTL_SECONDS,
         secure=(request.url.scheme == "https" or os.getenv("DS_COOKIE_SECURE", "0") == "1"),
     )
+    response.delete_cookie(LOGIN_CSRF_COOKIE_NAME)
     return response
 
 
-@app.get("/logout")
+@app.post("/logout")
 def logout(request: Request):
     conn = get_db()
     destroy_session(conn, request.cookies.get(SESSION_COOKIE_NAME))
@@ -1542,22 +1662,35 @@ async def releases_upload(
     safe_version = "".join(ch for ch in version if ch.isalnum() or ch in ".-_")[:60]
     if not safe_version:
         raise HTTPException(status_code=400, detail="Versão inválida.")
+    if Path(package.filename or "").suffix.lower() != ".zip":
+        raise HTTPException(status_code=415, detail="A release deve ser um arquivo ZIP.")
+    package_mime = str(package.content_type or "").split(";", 1)[0].strip().lower()
+    if package_mime not in {"application/zip", "application/x-zip-compressed"}:
+        raise HTTPException(status_code=415, detail="Tipo MIME inválido para release ZIP.")
     # Unique filename avoids overwriting an existing release before DB validation.
     filename = f"digital-signage-player-{safe_version}-{uuid.uuid4().hex}.zip"
     target = RELEASE_DIR / filename
+    temp_target = UPLOAD_TEMP_DIR / f"release-{uuid.uuid4().hex}.part"
     size = 0
     digest = hashlib.sha256()
     try:
-        with target.open("xb") as handle:
+        with temp_target.open("xb") as handle:
             while chunk := await package.read(1024 * 1024):
                 size += len(chunk)
-                if size > 2 * 1024**3:
-                    raise HTTPException(status_code=413, detail="Pacote excede 2 GiB.")
+                if size > MAX_RELEASE_BYTES:
+                    raise HTTPException(status_code=413, detail="Pacote excede o limite configurado.")
                 digest.update(chunk)
                 handle.write(chunk)
         if size == 0:
             raise HTTPException(status_code=400, detail="Pacote vazio.")
+        if not zipfile.is_zipfile(temp_target):
+            raise HTTPException(status_code=415, detail="Assinatura ZIP inválida.")
+        with zipfile.ZipFile(temp_target) as archive:
+            if archive.testzip() is not None:
+                raise HTTPException(status_code=400, detail="Pacote ZIP corrompido.")
+        os.replace(temp_target, target)
     except BaseException:
+        temp_target.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
         raise
     sha = digest.hexdigest()
@@ -1733,149 +1866,91 @@ def safe_media_path(relative_path):
     return target
 
 
-# =========================================================
-# PDF → IMAGENS
-# =========================================================
+def content_for_media_path(conn, relative_path: str):
+    normalized = Path(relative_path.replace("\\", "/")).as_posix().lstrip("/")
+    for row in conn.execute(
+        "SELECT id, filename, pages_json, archived_at FROM contents"
+    ):
+        candidates = {str(row["filename"] or "").replace("\\", "/").lstrip("/")}
+        try:
+            pages = json.loads(row["pages_json"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            pages = []
+        if isinstance(pages, list):
+            candidates.update(
+                str(page).replace("\\", "/").lstrip("/")
+                for page in pages
+                if isinstance(page, str)
+            )
+        if normalized in candidates:
+            return row
+    return None
 
-def render_pdf(pdf_path: Path, output_folder: Path):
 
-    output_folder.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+def content_is_authorized_for_tv(conn, content_id: int, tv_id: str) -> bool:
+    if conn.execute(
+        "SELECT 1 FROM tv_contents WHERE tv_id = ? AND content_id = ?",
+        (tv_id, content_id),
+    ).fetchone():
+        return True
+    rows = conn.execute(
+        """
+        SELECT pp.snapshot_json
+        FROM playlist_publications pp
+        WHERE pp.playlist_id IN (
+            SELECT playlist_id FROM tv_playlists WHERE tv_id = ?
+            UNION
+            SELECT playlist_id FROM schedules WHERE tv_id = ? AND enabled = 1
+        )
+        """,
+        (tv_id, tv_id),
+    ).fetchall()
+    for row in rows:
+        try:
+            snapshot = json.loads(row["snapshot_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if any(
+            isinstance(item, dict) and item.get("content_id") == content_id
+            for item in snapshot.get("items", [])
+        ):
+            return True
+    return False
 
-    pages = []
 
-    document = fitz.open(pdf_path)
+@app.get("/media/{relative_path:path}")
+def protected_media(request: Request, relative_path: str):
+    path = safe_media_path(relative_path)
+    if not path.is_file() or path.is_symlink():
+        raise HTTPException(status_code=404, detail="Mídia não encontrada.")
 
+    conn = get_db()
     try:
+        content = content_for_media_path(conn, relative_path)
+        if not content or content["archived_at"] is not None:
+            raise HTTPException(status_code=404, detail="Mídia não encontrada.")
 
-        if len(document) == 0:
-            raise ValueError(
-                "O PDF não possui páginas."
-            )
-
-        matrix = fitz.Matrix(
-            1.6,
-            1.6
-        )
-
-        for index, page in enumerate(document):
-
-            output_file = (
-                output_folder
-                / f"page-{index + 1:03d}.png"
-            )
-
-            pixmap = page.get_pixmap(
-                matrix=matrix,
-                alpha=False
-            )
-
-            pixmap.save(
-                str(output_file)
-            )
-
-            relative = output_file.relative_to(
-                MEDIA_DIR
-            )
-
-            pages.append(
-                str(relative).replace("\\", "/")
-            )
-
+        user = current_user_from_request(request)
+        if user:
+            authorized = can_access_content(conn, user, content["id"])
+        else:
+            device_tv_id = authenticated_device_tv_id(request, conn)
+            if device_tv_id:
+                authorized = content_is_authorized_for_tv(
+                    conn, content["id"], device_tv_id
+                )
+            elif os.getenv("DS_ALLOW_LEGACY_PUBLIC_MEDIA", "0") == "1":
+                authorized = bool(content_tv_ids(conn, content["id"]))
+            else:
+                authorized = False
+        if not authorized:
+            raise HTTPException(status_code=403, detail="Acesso à mídia negado.")
     finally:
-        document.close()
+        conn.close()
 
-    return pages
-
-
-# =========================================================
-# POWERPOINT → PDF → IMAGENS
-# =========================================================
-
-def convert_powerpoint_to_pdf(
-    source_path: Path,
-    work_folder: Path
-):
-
-    libreoffice = find_libreoffice()
-
-    if not libreoffice:
-
-        raise RuntimeError(
-            "LibreOffice não foi encontrado."
-        )
-
-    pdf_folder = work_folder / "pdf"
-    profile_folder = work_folder / "profile"
-
-    pdf_folder.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    profile_folder.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    command = [
-        libreoffice,
-        "--headless",
-        "--convert-to",
-        "pdf:impress_pdf_Export",
-        "--outdir",
-        str(pdf_folder),
-        f"-env:UserInstallation={profile_folder.as_uri()}",
-        str(source_path),
-    ]
-
-    # O parâmetro -env funciona antes de certos argumentos
-    # em algumas versões; por segurança tentamos a forma padrão.
-    command = [
-        libreoffice,
-        f"-env:UserInstallation={profile_folder.as_uri()}",
-        "--headless",
-        "--convert-to",
-        "pdf:impress_pdf_Export",
-        "--outdir",
-        str(pdf_folder),
-        str(source_path),
-    ]
-
-    creation_flags = 0
-
-    if os.name == "nt":
-        creation_flags = subprocess.CREATE_NO_WINDOW
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        creationflags=creation_flags
-    )
-
-    pdf_path = (
-        pdf_folder
-        / f"{source_path.stem}.pdf"
-    )
-
-    if result.returncode != 0 or not pdf_path.exists():
-
-        error_text = (
-            result.stderr.strip()
-            or result.stdout.strip()
-            or "Erro desconhecido."
-        )
-
-        raise RuntimeError(
-            f"Falha ao converter PowerPoint: {error_text}"
-        )
-
-    return pdf_path
-
+    response = FileResponse(path)
+    response.headers["Cache-Control"] = "private, max-age=300"
+    return response
 
 
 # =========================================================
@@ -1951,6 +2026,10 @@ def probe_media_metadata(path: Path, content_type: str):
                     result["bitrate"] = int(video.get("bit_rate")) if video.get("bit_rate") else None
                 except (TypeError, ValueError):
                     pass
+            elif content_type == "video":
+                errors.append("O arquivo MP4 não contém fluxo de vídeo válido.")
+            elif content_type == "image":
+                errors.append("O arquivo não contém uma imagem válida.")
             fmt = data.get("format", {}) if isinstance(data, dict) else {}
             try:
                 result["duration_sec"] = float(fmt.get("duration")) if fmt.get("duration") else None
@@ -1961,10 +2040,16 @@ def probe_media_metadata(path: Path, content_type: str):
                     result["bitrate"] = int(fmt.get("bit_rate")) if fmt.get("bit_rate") else None
                 except (TypeError, ValueError):
                     pass
-        except Exception as exc:
-            warnings.append(f"Validação técnica parcial: {exc}")
+        except Exception:
+            if content_type == "video":
+                errors.append("Não foi possível validar o vídeo com ffprobe.")
+            else:
+                warnings.append("Validação técnica parcial da imagem.")
     else:
-        warnings.append("ffprobe não encontrado; validação técnica parcial.")
+        if content_type == "video":
+            errors.append("ffprobe é obrigatório para validar vídeos MP4.")
+        else:
+            warnings.append("ffprobe não encontrado; metadados técnicos indisponíveis.")
 
     if content_type == "video":
         codec = (result.get("codec") or "").lower()
@@ -2279,13 +2364,130 @@ def create_tv(request: Request,
     )
 
 
+@app.post("/players/{tv_id}/delete")
+def delete_tv(
+    request: Request,
+    tv_id: str,
+    confirm_tv_id: str = Form(...),
+):
+    require_role(request, "admin")
+    clean_tv_id = tv_id.strip().upper()
+    if confirm_tv_id.strip().upper() != clean_tv_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Digite o ID exato da TV para confirmar a exclusão.",
+        )
+
+    conn = get_db()
+    try:
+        tv = conn.execute(
+            "SELECT tv_id, name FROM tvs WHERE tv_id = ?",
+            (clean_tv_id,),
+        ).fetchone()
+        if not tv:
+            raise HTTPException(status_code=404, detail="TV não encontrada.")
+
+        linked_counts = {
+            "schedules": conn.execute(
+                "SELECT COUNT(*) AS total FROM schedules WHERE tv_id = ?",
+                (clean_tv_id,),
+            ).fetchone()["total"],
+            "commands": conn.execute(
+                "SELECT COUNT(*) AS total FROM player_commands WHERE tv_id = ?",
+                (clean_tv_id,),
+            ).fetchone()["total"],
+            "events": conn.execute(
+                "SELECT COUNT(*) AS total FROM tv_event_log WHERE tv_id = ?",
+                (clean_tv_id,),
+            ).fetchone()["total"],
+        }
+
+        # Children are removed explicitly because legacy databases did not
+        # consistently enable SQLite foreign-key cascades.
+        for table in (
+            "player_update_jobs",
+            "player_commands",
+            "schedules",
+            "tv_playlists",
+            "tv_contents",
+            "user_tv_permissions",
+            "tv_runtime_status",
+            "tv_event_log",
+            "tv_monitor_state",
+            "tv_maintenance",
+            "stability_events",
+            "stability_samples",
+        ):
+            conn.execute(f"DELETE FROM {table} WHERE tv_id = ?", (clean_tv_id,))
+
+        conn.execute("DELETE FROM tvs WHERE tv_id = ?", (clean_tv_id,))
+        audit_event(
+            conn,
+            request,
+            "tv.delete",
+            "tv",
+            clean_tv_id,
+            (
+                f"TV excluída: {tv['name']}; "
+                f"agendamentos={linked_counts['schedules']}; "
+                f"comandos={linked_counts['commands']}; "
+                f"eventos={linked_counts['events']}"
+            ),
+        )
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return RedirectResponse(
+        "/players?" + urlencode({
+            "message": f"TV {clean_tv_id} excluída com sucesso.",
+            "kind": "success",
+        }),
+        status_code=303,
+    )
+
+
 # =========================================================
 # UPLOAD DE CONTEÚDO
 # =========================================================
 
+IMAGE_MIME_BY_EXTENSION = {
+    ".jpg": {"image/jpeg", "image/jpg"},
+    ".jpeg": {"image/jpeg", "image/jpg"},
+    ".png": {"image/png"},
+    ".webp": {"image/webp"},
+    ".gif": {"image/gif"},
+}
+
+
+def has_expected_media_signature(path: Path, extension: str) -> bool:
+    with path.open("rb") as handle:
+        head = handle.read(32)
+        if extension in {".jpg", ".jpeg"}:
+            if not head.startswith(b"\xff\xd8\xff"):
+                return False
+            handle.seek(-2, os.SEEK_END)
+            return handle.read(2) == b"\xff\xd9"
+    if extension == ".png":
+        return head.startswith(b"\x89PNG\r\n\x1a\n") and head[12:16] == b"IHDR"
+    if extension == ".gif":
+        return head.startswith((b"GIF87a", b"GIF89a"))
+    if extension == ".webp":
+        return head.startswith(b"RIFF") and head[8:12] == b"WEBP" and head[12:16] in {b"VP8 ", b"VP8L", b"VP8X"}
+    if extension == ".mp4":
+        return len(head) >= 12 and head[4:8] == b"ftyp"
+    return False
+
 async def prepare_uploaded_media(
     file: UploadFile,
-    name: str = ""
+    name: str = "",
+    upload_budget: dict | None = None,
 ):
     """Salva e valida a mídia, sem ainda criar o registro no banco."""
     if not file.filename:
@@ -2300,8 +2502,12 @@ async def prepare_uploaded_media(
 
     if extension in image_extensions:
         content_type = "image"
+        allowed_mime = IMAGE_MIME_BY_EXTENSION[extension]
+        max_bytes = MAX_IMAGE_BYTES
     elif extension in video_extensions:
         content_type = "video"
+        allowed_mime = {"video/mp4"}
+        max_bytes = MAX_VIDEO_BYTES
     else:
         raise HTTPException(
             status_code=400,
@@ -2311,25 +2517,49 @@ async def prepare_uploaded_media(
             )
         )
 
+    declared_mime = str(file.content_type or "").split(";", 1)[0].strip().lower()
+    if declared_mime not in allowed_mime:
+        raise HTTPException(
+            status_code=415,
+            detail=f"{file.filename}: tipo MIME incompatível com a extensão.",
+        )
+
     uid = uuid.uuid4().hex
     source_filename = f"uploads/{uid}{extension}"
     source_path = safe_media_path(source_filename)
+    temp_path = UPLOAD_TEMP_DIR / f"media-{uid}.part"
+    size = 0
+    budget = upload_budget if upload_budget is not None else {"remaining": MAX_REQUEST_BYTES}
 
     try:
-        with source_path.open("wb") as buffer:
+        with temp_path.open("xb") as buffer:
             while True:
                 chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
+                size += len(chunk)
+                if size > max_bytes or len(chunk) > int(budget.get("remaining", 0)):
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"{file.filename}: arquivo excede o limite configurado.",
+                    )
+                budget["remaining"] = int(budget.get("remaining", 0)) - len(chunk)
                 buffer.write(chunk)
 
+        if size == 0:
+            raise HTTPException(status_code=400, detail=f"{file.filename}: arquivo vazio.")
+        if not has_expected_media_signature(temp_path, extension):
+            raise HTTPException(
+                status_code=415,
+                detail=f"{file.filename}: assinatura do arquivo inválida.",
+            )
+
         metadata = probe_media_metadata(
-            source_path,
+            temp_path,
             content_type
         )
 
         if metadata.get("validation_status") == "error":
-            source_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -2337,10 +2567,13 @@ async def prepare_uploaded_media(
                     or f"{file.filename}: arquivo incompatível."
                 )
             )
+        os.replace(temp_path, source_path)
 
     except HTTPException:
+        temp_path.unlink(missing_ok=True)
         raise
     except Exception as exc:
+        temp_path.unlink(missing_ok=True)
         source_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=500,
@@ -3460,8 +3693,7 @@ def heartbeat(
     )
 
     conn = get_db()
-
-    # Autenticação da sessão e autorização da TV verificadas acima.
+    require_device_auth(request, conn, tv_id)
 
     exists = conn.execute(
         """
@@ -3943,12 +4175,10 @@ def player_maintenance(request: Request,
     note: str = Form("")
 ):
 
-    require_tv_access(request, tv_id, "operator")
+    user = require_tv_access(request, tv_id, "operator")
     tv_id = tv_id.strip().upper()
 
     conn = get_db()
-
-    require_device_auth(request, conn, tv_id)
 
     exists = conn.execute(
         """
@@ -4024,6 +4254,26 @@ def player_maintenance(request: Request,
         clean_note
     )
 
+    audit_event(
+        conn,
+        request,
+        (
+            "player.maintenance_enabled"
+            if enable
+            else "player.maintenance_disabled"
+        ),
+        "tv",
+        tv_id,
+        json.dumps(
+            {
+                "enabled": enable,
+                "actor": user["username"],
+                "note": clean_note,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
     conn.commit()
     conn.close()
 
@@ -4044,7 +4294,8 @@ def player_cache_manifest(request: Request, tv_id: str):
 
     tv_id = tv_id.strip().upper()
     conn = get_db()
-    require_device_auth(request, conn, tv_id)
+    if getattr(request.state, "web_player_tv_id", None) != tv_id:
+        require_device_auth(request, conn, tv_id)
 
     tv = conn.execute(
         "SELECT tv_id FROM tvs WHERE tv_id = ?",
@@ -4152,7 +4403,8 @@ def player_content(request: Request, tv_id: str):
 
     tv_id = tv_id.strip().upper()
     conn = get_db()
-    require_device_auth(request, conn, tv_id)
+    if getattr(request.state, "web_player_tv_id", None) != tv_id:
+        require_device_auth(request, conn, tv_id)
 
     scheduled = get_active_schedule(tv_id)
 
@@ -4540,6 +4792,21 @@ def download_release(request: Request, filename: str):
 # PLAYER
 # =========================================================
 
+@app.get("/api/web-player/{tv_id}")
+def web_player_content(request: Request, tv_id: str):
+    normalized = tv_id.strip().upper()
+    require_tv_access(request, normalized)
+    request.state.web_player_tv_id = normalized
+    return player_content(request, normalized)
+
+
+@app.get("/api/web-player/{tv_id}/cache-manifest")
+def web_player_cache_manifest(request: Request, tv_id: str):
+    normalized = tv_id.strip().upper()
+    require_tv_access(request, normalized)
+    request.state.web_player_tv_id = normalized
+    return player_cache_manifest(request, normalized)
+
 @app.get(
     "/player/{tv_id}",
     response_class=HTMLResponse
@@ -4548,6 +4815,7 @@ def player(
     request: Request,
     tv_id: str
 ):
+    require_tv_access(request, tv_id)
 
     return templates.TemplateResponse(
         request=request,
@@ -4593,11 +4861,7 @@ def gallery_page(
             created_at,
             archived_at
         FROM contents
-        WHERE content_type IN (
-            'image',
-            'video'
-        )
-        AND {archive_filter}
+        WHERE {archive_filter}
         ORDER BY
             COALESCE(
                 archived_at,
@@ -4614,11 +4878,22 @@ def gallery_page(
     contents = []
 
     for row in rows:
-
-        metadata = ensure_content_metadata(
-            conn,
-            row
-        )
+        legacy_format = row["content_type"] not in {"image", "video"}
+        if legacy_format:
+            try:
+                legacy_size = safe_media_path(row["filename"]).stat().st_size
+            except (OSError, HTTPException):
+                legacy_size = 0
+            metadata = {
+                "size_bytes": legacy_size,
+                "validation_status": "warning",
+                "validation_message": "Formato legado não suportado; o arquivo não será reproduzido.",
+            }
+        else:
+            metadata = ensure_content_metadata(
+                conn,
+                row
+            )
 
         usage_names, protected = content_usage(conn, row["id"])
         if user["role"] != "admin":
@@ -4637,6 +4912,9 @@ def gallery_page(
 
             "content_type":
                 row["content_type"],
+
+            "legacy_format":
+                legacy_format,
 
             "original_filename":
                 row["original_filename"],
@@ -5028,6 +5306,11 @@ async def upload_files_to_playlist(
             status_code=400,
             detail="Selecione pelo menos um arquivo."
         )
+    if len(files) > MAX_FILES_PER_UPLOAD:
+        raise HTTPException(
+            status_code=413,
+            detail=f"O lote excede o limite de {MAX_FILES_PER_UPLOAD} arquivos.",
+        )
 
     conn = get_db()
     playlist = conn.execute(
@@ -5054,6 +5337,7 @@ async def upload_files_to_playlist(
 
     uploaded = []
     errors = []
+    upload_budget = {"remaining": MAX_REQUEST_BYTES}
 
     for index, file in enumerate(files):
         prepared = None
@@ -5061,7 +5345,7 @@ async def upload_files_to_playlist(
         savepoint_started = False
 
         try:
-            prepared = await prepare_uploaded_media(file)
+            prepared = await prepare_uploaded_media(file, upload_budget=upload_budget)
             conn.execute(f"SAVEPOINT {savepoint}")
             savepoint_started = True
 

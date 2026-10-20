@@ -24,7 +24,6 @@
         }
 
         .media,
-        .page-image,
         video {
             position: absolute;
             inset: 0;
@@ -105,7 +104,6 @@
     <div id="stage">
         <div id="layout"></div>
         <img id="image" class="media" alt="" style="display:none;">
-        <div id="pages" style="position:absolute; inset:0; display:none;"></div>
         <video id="video" autoplay muted playsinline preload="auto" style="display:none;"></video>
     </div>
 
@@ -124,7 +122,6 @@
     const stage = document.getElementById("stage");
     const layoutEl = document.getElementById("layout");
     const imageEl = document.getElementById("image");
-    const pagesEl = document.getElementById("pages");
     const videoEl = document.getElementById("video");
     const debugEl = document.getElementById("debug");
     const statusEl = document.getElementById("status");
@@ -139,7 +136,6 @@
     let state = null;
     let currentIndex = 0;
     let timer = null;
-    let pageTimer = null;
     let currentObjectUrls = new Map();
     let lastRevision = null;
     let syncInProgress = false;
@@ -169,10 +165,6 @@
         if (timer) {
             clearTimeout(timer);
             timer = null;
-        }
-        if (pageTimer) {
-            clearTimeout(pageTimer);
-            pageTimer = null;
         }
     }
 
@@ -412,7 +404,7 @@
 
         try {
             const response = await fetch(
-                `/api/player/${encodeURIComponent(tvId)}/cache-manifest`,
+                `/api/web-player/${encodeURIComponent(tvId)}/cache-manifest`,
                 { cache: "no-store" }
             );
 
@@ -438,7 +430,6 @@
     function showOnly(element) {
         imageEl.style.display = "none";
         videoEl.style.display = "none";
-        pagesEl.style.display = "none";
         layoutEl.style.display = "none";
         element.style.display = "block";
     }
@@ -484,49 +475,6 @@
                 console.warn("Autoplay bloqueado:", error);
             });
         }
-    }
-
-    function renderPages(content, durationSec) {
-        showOnly(pagesEl);
-        pagesEl.innerHTML = "";
-
-        const pages = Array.isArray(content.pages)
-            ? content.pages
-            : [];
-
-        if (!pages.length) {
-            showError(`Nenhuma página disponível: ${content.name || "conteúdo"}`);
-            scheduleNext(2000);
-            return;
-        }
-
-        let pageIndex = 0;
-        const interval = (Number(durationSec) || 10) * 1000;
-
-        const showPage = () => {
-            pagesEl.innerHTML = "";
-
-            const img = document.createElement("img");
-            img.className = "page-image";
-            img.src = pages[pageIndex];
-            img.alt = "";
-
-            img.onerror = () => {
-                showError(`Falha ao carregar uma página de: ${content.name || "documento"}`);
-            };
-
-            pagesEl.appendChild(img);
-
-            pageIndex++;
-
-            if (pageIndex < pages.length) {
-                pageTimer = setTimeout(showPage, interval);
-            } else {
-                timer = setTimeout(nextItem, interval);
-            }
-        };
-
-        showPage();
     }
 
     function renderLayout(content, durationSec) {
@@ -610,15 +558,12 @@
             return;
         }
 
-        if (
-            content.content_type === "pdf" ||
-            content.content_type === "powerpoint"
-        ) {
-            renderPages(content, item.duration_sec);
+        if (content.content_type === "image") {
+            renderImage(content, item.duration_sec);
             return;
         }
 
-        renderImage(content, item.duration_sec);
+        showError("Formato legado não suportado pelo Player.");
     }
 
     function nextItem() {
@@ -669,7 +614,7 @@
 
         try {
             const response = await fetch(
-                `/api/player/${encodeURIComponent(tvId)}`,
+                `/api/web-player/${encodeURIComponent(tvId)}`,
                 { cache: "no-store" }
             );
 
@@ -778,7 +723,6 @@
         setInterval(prefetchManifest, 60000);
         setInterval(heartbeat, 10000);
 
-        await heartbeat();
     }
 
     init();

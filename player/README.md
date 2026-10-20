@@ -24,6 +24,10 @@ Na inicialização, o Player limpa arquivos `.part` antigos, carrega `state.json
 
 O worker consulta a configuração publicada e o manifesto de cache, baixa mídias ausentes para `.part`, compara tamanho quando `Content-Length` existe e só promove com `os.replace` após download completo. A playlist local só muda quando todos os recursos foram obtidos. Falha de rede ou servidor mantém o último `state.json` válido e a mídia já presente. Um arquivo em cache é considerado válido apenas se existe e não está vazio; não há hash por mídia. Recursos órfãos são removidos após **24 horas contadas pelo `mtime`** do arquivo, desde que não sejam referenciados no manifesto atual.
 
+O download de mídia usa o Bearer do Dispositivo no cabeçalho, sem token em URL.
+Antes de exigir credenciais no Servidor, provisionar todos os Players e validar
+download, Range, cache offline e heartbeat em um Raspberry de homologação.
+
 O mesmo worker sequencial supervisiona o Firefox, sincroniza, envia heartbeat e busca comandos. O heartbeat inclui versão, playlist/conteúdo informado pelo navegador, estado de sincronização, CPU, RAM, temperatura, armazenamento, rede, watchdog e até 40 eventos pendentes de estabilidade; o servidor responde com IDs aceitos para retirada da fila. O Player pode receber `sync_now`, `restart_browser`, `clear_cache` (limpa `.part`), `diagnose`, `update_player`, `restart_player` e `reboot`. Esses comandos dependem do contrato e das autorizações do servidor; não devem ser testados em Dispositivos reais durante uma revisão do repositório.
 
 ## Atualização e estabilidade
