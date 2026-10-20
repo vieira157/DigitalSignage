@@ -90,6 +90,10 @@ templates = Jinja2Templates(
 )
 APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 APP_VERSION = "2.3.1-stability-night"
+OFFICIAL_PLAYER_VERSION = "3.2.2-stable"
+MIN_PASSWORD_LENGTH = 12
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_FAILURES = 5
 
 
 @app.get("/health")
@@ -121,8 +125,9 @@ def health():
 # =========================================================
 
 def get_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
 
     return conn
 
@@ -635,6 +640,7 @@ def ensure_initial_admin(conn):
 def create_session(conn, user_id: int) -> str:
     raw = secrets.token_urlsafe(36)
     now = time.time()
+    conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
     conn.execute(
         """
         INSERT INTO sessions
@@ -900,7 +906,7 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tv_monitor_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            recommended_player_version TEXT NOT NULL DEFAULT '3.2.1-stable',
+            recommended_player_version TEXT NOT NULL DEFAULT '3.2.2-stable',
             offline_seconds INTEGER NOT NULL DEFAULT 30,
             disk_warning_mb INTEGER NOT NULL DEFAULT 1024,
             sync_warning_seconds INTEGER NOT NULL DEFAULT 120,
@@ -1040,6 +1046,20 @@ def init_db():
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_sessions_token
         ON sessions(token_hash)
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            ip_address TEXT NOT NULL,
+            attempted_at REAL NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup
+        ON login_attempts(username, ip_address, attempted_at)
     """)
 
     conn.execute("""
@@ -1291,11 +1311,12 @@ def init_db():
         "SELECT recommended_player_version FROM tv_monitor_settings WHERE id = 1"
     ).fetchone()
     if current_monitor and str(current_monitor["recommended_player_version"] or "").strip() in {
-        "", "3.0.0-stable", "3.1.0-remote-mgmt", "3.2.0-stable"
+        "", "3.0.0-stable", "3.1.0-remote-mgmt", "3.2.0-stable",
+        "3.2.1-stable", "3.2.2-stability-preview"
     }:
         conn.execute(
             "UPDATE tv_monitor_settings SET recommended_player_version = ?, updated_at = ? WHERE id = 1",
-            ("3.2.1-stable", time.time()),
+            (OFFICIAL_PLAYER_VERSION, time.time()),
         )
 
     conn.commit()
@@ -2980,7 +3001,7 @@ def monitor_settings(conn=None):
 
     if not row:
         return {
-            "recommended_player_version": "3.2.1-stable",
+            "recommended_player_version": OFFICIAL_PLAYER_VERSION,
             "offline_seconds": 30,
             "disk_warning_mb": 1024,
             "sync_warning_seconds": 120,
