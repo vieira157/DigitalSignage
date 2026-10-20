@@ -2207,17 +2207,20 @@ def admin(request: Request):
     settings = monitor_settings(conn) if "tv_monitor_settings" in {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()} else {"offline_seconds": 30}
     user = require_user(request)
     allowed = allowed_tv_ids(conn, user)
-    tv_rows = [r for r in conn.execute("SELECT * FROM tvs ORDER BY tv_id") if r["tv_id"] in allowed]
-    state_rows = conn.execute("SELECT * FROM tv_monitor_state").fetchall() if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tv_monitor_state'").fetchone() else []
-    state_by_tv = {row["tv_id"]: row for row in state_rows}
+    tv_rows = [r for r in conn.execute("""
+        SELECT tvs.*, tv_runtime_status.payload_json AS runtime_payload_json
+        FROM tvs LEFT JOIN tv_runtime_status ON tv_runtime_status.tv_id = tvs.tv_id
+        ORDER BY tvs.tv_id
+    """) if r["tv_id"] in allowed]
     problem_tvs = []
     online_count = 0
     for tv in tv_rows:
         online = tv["last_seen"] is not None and now - tv["last_seen"] <= int(settings.get("offline_seconds", 30))
         if online: online_count += 1
-        state = state_by_tv.get(tv["tv_id"])
-        health = state["health"] if state else ("ok" if online else "offline")
-        reason = state["reason"] if state else ("Player comunicando." if online else "Sem heartbeat recente.")
+        health, reason = evaluate_tv_health(
+            tv, parse_runtime_payload(tv["runtime_payload_json"]), settings,
+            maintenance_for_tv(conn, tv["tv_id"]), now,
+        )
         if health in {"warning", "error", "offline"}:
             problem_tvs.append({"tv_id": tv["tv_id"], "name": tv["name"], "health": health, "reason": reason})
     contents_total = sum(1 for r in conn.execute("SELECT id FROM contents WHERE content_type IN ('image','video') AND archived_at IS NULL") if can_access_content(conn, user, r["id"]))
@@ -2837,6 +2840,28 @@ def log_tv_event(
     )
 
 
+def evaluate_player_version_status(reported_version, recommended_version):
+    """Informational exact comparison; no precedence or release policy implied."""
+    reported = str(reported_version or "").strip()
+    recommended = str(recommended_version or "").strip()
+    if not reported:
+        status, label = "unknown", "Versão não informada"
+    elif not recommended:
+        status, label = "unknown", "Sem versão recomendada"
+    elif reported == recommended:
+        status, label = "current", "Versão recomendada"
+    else:
+        status, label = "different", "Versão diferente da recomendada"
+    return {
+        "player_version": reported,
+        "recommended_player_version": recommended,
+        "version_status": status,
+        "version_status_label": label,
+        # Legacy API field: textual inequality, not evidence of an older version.
+        "version_outdated": status == "different",
+    }
+
+
 def evaluate_tv_health(
     tv,
     runtime,
@@ -2908,32 +2933,6 @@ def evaluate_tv_health(
         return (
             "error",
             "Erro durante a reprodução."
-        )
-
-    recommended = str(
-        settings.get(
-            "recommended_player_version"
-        )
-        or ""
-    ).strip()
-
-    player_version = str(
-        tv["player_version"]
-        or runtime.get("player_version")
-        or ""
-    ).strip()
-
-    if (
-        recommended
-        and player_version
-        and player_version != recommended
-    ):
-        return (
-            "warning",
-            (
-                f"Player {player_version}; "
-                f"versão recomendada: {recommended}."
-            )
         )
 
     sync_status = str(
@@ -3038,7 +3037,7 @@ def record_monitor_snapshot(
         tv["player_version"]
         or runtime.get("player_version")
         or ""
-    )
+    ).strip()
 
     browser_value = runtime.get(
         "browser_running"
@@ -3091,6 +3090,22 @@ def record_monitor_snapshot(
                     "Player em manutenção",
             }
 
+            # Recognize the previous evaluator's version-only reason. Preserve
+            # health_ok for existing consumers, without claiming a device repair.
+            previous_reason = previous["reason"] or ""
+            version_rule_changed = (
+                previous["health"] == "warning" and health == "ok"
+                and previous_reason.startswith("Player ")
+                and "; versão recomendada: " in previous_reason
+                and previous_reason.endswith(".")
+            )
+            if version_rule_changed:
+                labels["ok"] = "Avaliação operacional atualizada"
+            event_reason = (
+                "A avaliação atual separa divergência de versão da saúde operacional. "
+                "Nenhum alerta operacional detectado; não comprova reparo do dispositivo."
+                if version_rule_changed else reason
+            )
             log_tv_event(
                 conn,
                 tv_id,
@@ -3100,7 +3115,7 @@ def record_monitor_snapshot(
                     health,
                     "Status alterado"
                 ),
-                reason
+                event_reason
             )
 
         if (
@@ -3410,10 +3425,9 @@ def heartbeat(
         "current_content_id"
     )
 
-    player_version = str(
-        data.get("player_version")
-        or APP_VERSION
-    )[:50]
+    # This column describes the latest heartbeat, not a last-known inventory.
+    # Missing/blank versions remain unknown; never substitute the server version.
+    player_version = str(data.get("player_version") or "").strip()[:50]
 
     current_content_name = str(
         data.get(
@@ -3613,8 +3627,10 @@ def tvs_status(request: Request, ):
         try:
             if float(duration) > 0: progress = max(0.0, min(100.0, float(position) / float(duration) * 100.0))
         except (TypeError, ValueError): pass
-        recommended = str(settings.get("recommended_player_version") or "").strip()
-        player_version = str(row["player_version"] or runtime.get("player_version") or "").strip()
+        version = evaluate_player_version_status(
+            row["player_version"] or runtime.get("player_version"),
+            settings.get("recommended_player_version"),
+        )
         online = row["last_seen"] is not None and now - float(row["last_seen"]) <= int(settings.get("offline_seconds") or 30)
         result.append({
             "tv_id": row["tv_id"], "name": row["name"], "location": row["location"],
@@ -3628,9 +3644,8 @@ def tvs_status(request: Request, ):
             "current_content_type": runtime.get("current_content_type"),
             "playback_position": position, "playback_duration": duration,
             "playback_state": runtime.get("playback_state"), "progress_percent": progress,
-            "browser_running": runtime.get("browser_running"), "player_version": player_version,
-            "recommended_player_version": recommended,
-            "version_outdated": bool(recommended and player_version and player_version != recommended),
+            "browser_running": runtime.get("browser_running"),
+            **version,
             "sync_status": runtime.get("sync_status"), "last_sync_at": row["last_sync_at"],
             "last_error": row["last_error"] or "", "cache_files": runtime.get("cache_files"),
             "cache_bytes": runtime.get("cache_bytes"), "disk_free_mb": runtime.get("disk_free_mb"),
@@ -3843,7 +3858,7 @@ def player_details_page(
         duration_text = ""
         if event["event_type"] == "health_offline":
             recovery = conn.execute(
-                "SELECT created_at FROM tv_event_log WHERE tv_id=? AND created_at>? AND event_type='health_ok' ORDER BY created_at ASC LIMIT 1",
+                "SELECT created_at FROM tv_event_log WHERE tv_id=? AND created_at>? AND event_type IN ('health_ok', 'health_warning', 'health_error') ORDER BY created_at ASC LIMIT 1",
                 (tv_id, event["created_at"])
             ).fetchone()
             end = recovery["created_at"] if recovery else time.time()
@@ -3874,7 +3889,11 @@ def player_details_page(
     health_labels = {"ok":"OK","warning":"Atenção","error":"Erro","offline":"Offline","maintenance":"Manutenção"}
     status = {
         "health": health, "health_label": health_labels.get(health, health), "health_reason": health_reason,
-        "player_version": row["player_version"], "ip_address": row["ip_address"],
+        **evaluate_player_version_status(
+            row["player_version"] or runtime.get("player_version"),
+            settings.get("recommended_player_version"),
+        ),
+        "ip_address": row["ip_address"],
         "current_playlist_name": row["current_playlist_name"], "current_content_name": row["current_content_name"],
         "playback_state": runtime.get("playback_state"), "browser_running": runtime.get("browser_running"),
         "sync_status": runtime.get("sync_status"), "last_seen_text": format_monitor_datetime(row["last_seen"]),
