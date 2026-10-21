@@ -3,7 +3,6 @@
 ### Plataforma corporativa de gerenciamento, distribuição e monitoramento de conteúdos digitais
 
 **Desenvolvimento:** Victor Gabriel  
-**Aplicação de referência:** Arvedi Metalfer do Brasil  
 **Fase atual:** preparação e homologação da implantação em Linux
 
 ---
@@ -249,12 +248,12 @@ O projeto busca ampliar sua confiabilidade e facilidade de operação, com foco 
 
 ## Autoria e créditos
 
-O **Digital Signage foi idealizado e desenvolvido por Victor Gabriel**, no contexto das necessidades de comunicação visual da **Arvedi Metalfer do Brasil**.
+O **Digital Signage foi idealizado e desenvolvido por Victor Gabriel**, no contexto das necessidades de comunicação visual da **AMBrasil**.
 
 O trabalho compreendeu a concepção da solução, definição de arquitetura, desenvolvimento da aplicação, integração com dispositivos de reprodução, implementação de funcionalidades, testes, análise de problemas e evolução técnica. Ferramentas de inteligência artificial foram utilizadas como apoio supervisionado à programação, revisão de código e documentação, cabendo ao idealizador a condução das decisões funcionais e técnicas do projeto.
 
 **Idealização, arquitetura e desenvolvimento:** Victor Gabriel  
-**Contexto organizacional:** Tecnologia da Informação — GSS | Arvedi Metalfer
+**Contexto organizacional:** Tecnologia da Informação
 
 ## Uso e propriedade intelectual
 
