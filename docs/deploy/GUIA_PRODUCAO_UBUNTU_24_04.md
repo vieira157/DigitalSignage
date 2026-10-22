@@ -12,6 +12,34 @@ repositório. Execute primeiro em uma VM de homologação equivalente ao servido
 final. Os valores `REPO_HTTPS_URL`, `COMMIT_SHA`, `ADMIN_CIDR` e `PLAYER_CIDR`
 devem ser substituídos pelos valores aprovados da empresa.
 
+## Caminho curto para instalação nova
+
+Após colocar o checkout aprovado em `/opt/digital-signage/app` e instalar os
+pacotes Ubuntu da seção 2, a preparação do servidor exige apenas dois comandos.
+O primeiro é para **banco novo**, sem migração. Ele reaproveita o instalador,
+configura o ambiente se ausente, corrige a propriedade de backups, configura o
+virtual host se ainda não existir, executa preflight e inicia o serviço. Não
+sobrescreve `server.env` ou um virtual host já presente.
+
+```bash
+(cd /opt/digital-signage/app && sudo bash deploy/linux/complete-install.sh --start-new)
+```
+
+Guarde a senha inicial apresentada no terminal. Acesse
+`http://signage.amb.local`, entre como `admin` e altere sua senha na página
+**Usuários**. A segunda chamada exige que pelo menos um administrador ativo
+tenha concluído a troca, remove a senha inicial de `server.env`, reinicia,
+verifica a saúde, cria o primeiro backup e habilita os timers:
+
+```bash
+(cd /opt/digital-signage/app && sudo bash deploy/linux/complete-install.sh --finish)
+```
+
+Se o SQLite antigo será migrado, não use `--start-new`: conclua o procedimento
+de migração da seção 4.4 antes de iniciar. O firewall permanece sob a política
+de rede da empresa, com as sub-redes reais da seção 7. O fluxo detalhado abaixo
+continua disponível para diagnóstico e homologação.
+
 ## 1. Resultado da análise do projeto
 
 ### 1.1 Componentes e estrutura

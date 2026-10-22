@@ -8,6 +8,31 @@ Os comandos deste documento são para execução futura pelo responsável, na ja
 autorizada. A preparação no Windows não executa instalação, serviços, SSH,
 migração, acesso à VM ou cópia de dados operacionais.
 
+## Caminho curto após preparar o checkout
+
+Para uma instalação **sem banco anterior**, depois de instalar os pacotes Ubuntu
+e colocar o checkout aprovado em `/opt/digital-signage/app`, execute:
+
+```bash
+(cd /opt/digital-signage/app && sudo bash deploy/linux/complete-install.sh --start-new)
+```
+
+O script aproveita `install-server.sh`, cria `server.env` somente se não existir,
+gera uma senha inicial sem colocá-la no histórico do shell, corrige a propriedade
+dos backups, preserva o virtual host Nginx já ativo, aplica a referência HTTP
+somente se não houver virtual host para o DNS, executa preflight offline e
+online e inicia a aplicação. Guarde a senha apresentada; faça login e altere a
+senha do administrador em **Usuários**. Depois execute:
+
+```bash
+(cd /opt/digital-signage/app && sudo bash deploy/linux/complete-install.sh --finish)
+```
+
+Esta etapa exige a senha já alterada, elimina a senha inicial de `server.env`,
+verifica a saúde, cria um backup e habilita os timers. Em caso de migração, não
+use `--start-new`; siga os passos de cópia/restore e preflight abaixo. A política
+UFW depende das sub-redes corporativas e continua uma etapa da infraestrutura.
+
 ## Layout e responsabilidades
 
 | Local | Conteúdo / permissão |
